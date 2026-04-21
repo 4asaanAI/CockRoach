@@ -21,114 +21,298 @@ import {
   Moon,
   Bell,
   RefreshCcw,
-  Trash2
+  Trash2,
+  Lightbulb,
+  ShieldCheck,
+  Briefcase,
+  Rocket,
+  Image as ImageIcon,
+  CheckSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { supabase } from './lib/supabase';
 import SettingsLLM from './components/SettingsLLM';
 import ProfileSelector from './components/ProfileSelector';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
+
+const APP_MODES = [
+  { id: 'IDEA_GENERATION', icon: Lightbulb, label: 'Generate Ideas' },
+  { id: 'IDEA_VALIDATION', icon: ShieldCheck, label: 'Validate Idea' },
+  { id: 'DEEP_RESEARCH', icon: Search, label: 'Research Market' },
+  { id: 'THINKING', icon: Brain, label: 'Think Deeply' },
+  { id: 'BUSINESS_MODEL', icon: Briefcase, label: 'Business Model' },
+  { id: 'POSITIONING', icon: Rocket, label: 'Brand & Positioning' },
+  { id: 'IMAGE_PROMPTING', icon: ImageIcon, label: 'Create Visual Prompt' },
+  { id: 'EXECUTION', icon: CheckSquare, label: 'Build Plan' },
+];
 
 export default function App() {
-  const { currentUser, profiles, azureConfig } = useAppStore();
+  const { currentUser, setAzureConfig, azureConfig, setCurrentUser } = useAppStore();
   const [isAuthenticated, setIsAuthenticated] = React.useState(false);
+  const [authChecking, setAuthChecking] = React.useState(true);
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = React.useState(false);
   const [isRightSidebarCollapsed, setIsRightSidebarCollapsed] = React.useState(false);
+  const [activeMode, setActiveMode] = React.useState('IDEA_GENERATION');
+  const [isModeSelectOpen, setIsModeSelectOpen] = React.useState(false);
   const [currentPage, setCurrentPage] = React.useState<'chat' | 'settings' | 'research' | 'memory' | 'projects'>('chat');
   const [isBrutalHonesty, setIsBrutalHonesty] = React.useState(false);
   
   // Chat State
   const [input, setInput] = React.useState('');
-  const [messages, setMessages] = React.useState<{ role: 'user' | 'assistant', content: string | React.ReactNode, rawText?: string }[]>([]);
+  const [messages, setMessages] = React.useState<{ id?: string, role: 'user' | 'assistant', content: string | React.ReactNode, rawText?: string }[]>([]);
   const [isTyping, setIsTyping] = React.useState(false);
   const chatScrollRef = React.useRef<HTMLDivElement>(null);
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Dummy Chat History Data
-  const [chatHistory, setChatHistory] = React.useState([
-    { 
-      id: '1', 
-      title: 'Market Entry: Logistics', 
-      messages: [
-        { role: 'user', content: 'Analyze logistics in APAC' }, 
-        { role: 'assistant', content: 'APAC logistics show a 15% CAGR with strong focus on last-mile delivery networks.' }
-      ] 
-    },
-    { 
-      id: '2', 
-      title: 'Vendor Risk Matrix', 
-      messages: [
-        { role: 'user', content: 'Evaluate vendor risks in sub-tier suppliers' }, 
-        { role: 'assistant', content: 'Vendor risks are concentrated deeply in tier-2 suppliers within the hardware segment. High exposure detected.' }
-      ] 
-    },
-    { 
-      id: '3', 
-      title: 'Q3 Financial Strategy', 
-      messages: [
-        { role: 'user', content: 'What is the Q3 projection?' }, 
-        { role: 'assistant', content: 'Q3 projections indicate a strong reliance on recurring revenue streams, stabilizing at 89% net retention.' }
-      ] 
-    }
-  ]);
+  const [chatHistory, setChatHistory] = React.useState<any[]>([]);
+  const [activeChatId, setActiveChatId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (chatScrollRef.current) {
+    // Replaces Auth cycle with direct sync check
+    if (currentUser?.id) {
+       syncLocalUserWithDatabase(currentUser);
+    } else {
+       setIsAuthenticated(false);
+       setAuthChecking(false);
+    }
+  }, [currentUser?.id]); // STRICT ID DEPENDENCY TO PREVENT INFINITE SETTINGS LOOPS
+
+  const syncLocalUserWithDatabase = async (user: any) => {
+    try {
+      setIsAuthenticated(true);
+      
+      // Load User Config
+      const { data: userData, error: userError } = await supabase.from('users').select('*').eq('id', user.id).single();
+      
+      if (userError && userError.code !== 'PGRST116') {
+         console.error('User Fetch Error:', userError);
+         toast.error(`Database Error: ${userError.message}`);
+      }
+      
+      if (!userData) {
+         const { error: insertUserError } = await supabase.from('users').insert({ id: user.id, name: user.name, email: user.email, avatar: user.avatar || '' });
+         if (insertUserError) toast.error(`User Creation Error: ${insertUserError.message}`);
+      } else if (userData.name !== user.name || userData.email !== user.email || userData.avatar !== user.avatar) {
+         const { error: updateError } = await supabase.from('users').update({ name: user.name, email: user.email, avatar: user.avatar || '' }).eq('id', user.id);
+         if (updateError) toast.error(`Profile Sync Warning: ${updateError.message}`);
+      }
+
+      // Load Azure Config
+      const { data: configData, error: configError } = await supabase.from('azure_configs').select('*').eq('user_id', user.id).single();
+      if (configError && configError.code !== 'PGRST116') {
+         toast.error(`Config Fetch Error: ${configError.message}`);
+      }
+
+      if (configData) {
+         setAzureConfig({ apiKey: configData.api_key, endpoint: configData.endpoint, deployment: configData.deployment, model: configData.model, version: configData.version });
+      } else {
+         const defaultConfig = {
+           user_id: user.id,
+           api_key: 'DKUDyLkncgn1VtOAfJAA9wQdRAOrbQCD2bjLnme8dTlfElC5n1mLJQQJ99CDACYeBjFXJ3w3AAAAACOGNEId',
+           endpoint: 'https://layaaos.cognitiveservices.azure.com/',
+           deployment: 'CockRoach_2.0',
+           model: 'gpt-5.1-chat',
+           version: '2024-12-01-preview'
+         };
+         const { error: insertConfigError } = await supabase.from('azure_configs').insert(defaultConfig);
+         if (insertConfigError) toast.error(`Config Creation Error: ${insertConfigError.message}`);
+         setAzureConfig({ apiKey: defaultConfig.api_key, endpoint: defaultConfig.endpoint, deployment: defaultConfig.deployment, model: defaultConfig.model, version: defaultConfig.version });
+      }
+
+      await loadChatHistory(user.id);
+    } catch (e: any) {
+      console.error('Error syncing user:', e);
+      toast.error(`Critical Sync Error: ${e.message}`);
+    } finally {
+      setAuthChecking(false);
+    }
+  };
+
+  const loadChatHistory = async (userId: string) => {
+    const { data: chats, error } = await supabase.from('chats').select('*').eq('user_id', userId).order('updated_at', { ascending: false });
+    if (error) {
+       toast.error(`History Sync Error: ${error.message}`);
+       return;
+    }
+    if (chats) {
+       setChatHistory(chats.map(c => ({ id: c.id, title: c.title, updatedAt: c.updated_at })));
+    }
+  };
+
+  React.useEffect(() => {
+    if (!currentUser || !activeChatId) return;
+    const fetchMessages = async () => {
+      const { data: msgs, error } = await supabase.from('messages')
+        .select('*')
+        .eq('chat_id', activeChatId)
+        .order('created_at', { ascending: true });
+      
+      if (error) { toast.error(`Message Sync Error: ${error.message}`); }
+      
+      if (msgs) {
+         setMessages(msgs.map(m => ({
+           id: m.id,
+           role: m.role as any,
+           content: m.content,
+           rawText: m.raw_text
+         })));
+      }
+    };
+    fetchMessages();
+  }, [activeChatId, currentUser]);
+
+  React.useEffect(() => {
+    // robust scroll to bottom
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    } else if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [messages, isTyping]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !currentUser) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const text = event.target?.result;
       const fileContentStr = typeof text === 'string' ? text : 'Binary file';
-
-      setMessages(prev => [...prev, { 
-        role: 'user', 
-        content: (
-          <div className="flex items-center gap-2 p-2 bg-background border border-border rounded-lg text-sm">
-            <Pin size={14} className="text-primary rotate-45" />
-            <span className="font-medium text-foreground">{file.name}</span>
-            <span className="text-[10px] text-muted-foreground font-mono">{(file.size / 1024).toFixed(1)} KB</span>
-          </div>
-        ),
-        rawText: `[File attached: ${file.name}]\n\nContent:\n${fileContentStr.substring(0, 3000)}`
-      }]);
       
-      // Simulate analyzing file
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        setMessages(prev => [...prev, { role: 'assistant', content: `I have ingested "${file.name}" and extracted its contents. The telemetry data has been injected into our current context. You may now query against it.` }]);
-      }, 1500);
+      let currentChatId = activeChatId;
+
+      try {
+        if (!currentChatId) {
+          const { data: chatData, error: chatErr } = await supabase.from('chats').insert({
+            user_id: currentUser.id,
+            title: `File: ${file.name}`.substring(0, 40) + '...'
+          }).select().single();
+          
+          if (chatErr) throw chatErr;
+          
+          if (chatData) {
+             currentChatId = chatData.id;
+             setActiveChatId(currentChatId);
+             await loadChatHistory(currentUser.id);
+          }
+        } else {
+          await supabase.from('chats').update({ updated_at: new Date().toISOString() }).eq('id', currentChatId);
+          await loadChatHistory(currentUser.id);
+        }
+
+        if (currentChatId) {
+          // Add File Message to Supabase
+          const { data: userMsg } = await supabase.from('messages').insert({
+            chat_id: currentChatId,
+            role: 'user',
+            content: `Attached File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
+            raw_text: `[File attached: ${file.name}]\n\nContent:\n${fileContentStr.substring(0, 3000)}`
+          }).select().single();
+          
+          if (userMsg) {
+             setMessages(prev => [...prev, { id: userMsg.id, role: 'user', content: userMsg.content, rawText: userMsg.raw_text }]);
+          } else {
+             setMessages(prev => [...prev, { role: 'user', content: `Attached File: ${file.name}` }]);
+          }
+
+          // Simulate reading
+          setTimeout(async () => {
+             const { data: assistMsg } = await supabase.from('messages').insert({
+                chat_id: currentChatId!,
+                role: 'assistant',
+                content: `I have ingested "${file.name}" and extracted its contents. The telemetry data has been injected into our current context. You may now query against it.`
+              }).select().single();
+              
+              if (assistMsg) {
+                 setMessages(prev => [...prev, { id: assistMsg.id, role: 'assistant', content: assistMsg.content }]);
+              }
+          }, 1500);
+        }
+
+      } catch (err: any) {
+        console.error('Failed to upload file:', err);
+        toast.error(`File Write Error: ${err.message}`);
+      }
     };
 
-    // Assuming text files, CSVs, or JSON for standard processing
     reader.readAsText(file);
     
-    // Clear input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
   const handleSendMessage = async () => {
-    if (!input.trim() || isTyping) return;
+    if (!input.trim() || isTyping || !currentUser) return;
     
     const userMsg = input.trim();
     setInput('');
-    const newMessages = [...messages, { role: 'user' as const, content: userMsg }];
-    setMessages(newMessages);
     setIsTyping(true);
 
+    let currentChatId = activeChatId;
+
     try {
+      if (!currentChatId) {
+        const { data: chatData, error } = await supabase.from('chats').insert({
+          user_id: currentUser.id,
+          title: userMsg.substring(0, 40) + '...'
+        }).select().single();
+        if (error) { toast.error(`Chat Init Error: ${error.message}`); throw error; }
+        currentChatId = chatData.id;
+        setActiveChatId(currentChatId);
+        await loadChatHistory(currentUser.id);
+      } else {
+        const { error } = await supabase.from('chats').update({ updated_at: new Date().toISOString() }).eq('id', currentChatId);
+        if (error) { toast.error(`Chat Update Error: ${error.message}`); }
+        await loadChatHistory(currentUser.id);
+      }
+
+      const { data: insertedUserMsg, error: msgError } = await supabase.from('messages').insert({
+        chat_id: currentChatId,
+        role: 'user',
+        content: userMsg
+      }).select().single();
+
+      if (msgError) { toast.error(`Database Write Error: ${msgError.message}`); throw msgError; }
+
+      if (insertedUserMsg) {
+         setMessages(prev => [...prev, { id: insertedUserMsg.id, role: 'user', content: insertedUserMsg.content }]);
+      } else {
+         setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+      }
+
       const baseUrl = azureConfig.endpoint.endsWith('/') ? azureConfig.endpoint.slice(0, -1) : azureConfig.endpoint;
       const url = `${baseUrl}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.version}`;
       
+      const newMessagesForAPI = [...messages.map(m => ({
+        role: m.role,
+        content: m.rawText ? m.rawText : (typeof m.content === 'string' ? m.content : '[File Attached]')
+      })), { role: 'user', content: userMsg }];
+
+      const activeModeData = APP_MODES.find(m => m.id === activeMode);
+      const systemPrompt = `You are an advanced entrepreneurial intelligence copilot named CockRoach, embedded inside a custom web app for brainstorming, refining, validating, and stress-testing startup and business ideas.
+Your role is to help the user move from vague inspiration to clear, testable, high-quality business concepts. You must operate like a suite of specialized tools inside one assistant.
+
+---
+CURRENT OPERATING MODE: ${activeModeData?.id || 'IDEA_GENERATION'} (${activeModeData?.label})
+
+When responding, determine which mode is most useful based on the user's request. If unclear, ask a short clarifying question or provide a structured response with assumptions.
+
+- If IDEA_GENERATION: Generate specific, differentiated, feasible, monetizable, testable ideas. Include idea name, target customer, problem, solution, why now, business model, MVP, validation test, key risks.
+- If IDEA_VALIDATION: Evaluate ideas with healthy skepticism. Identify strengths, weaknesses, assumptions, critical unknowns, validation experiments, and a go/maybe/no-go recommendation.
+- If DEEP_RESEARCH: Produce structured, analyst-style outputs. Include market overview, customer segments, competitors, substitutes, trends, risks, whitespace opportunities. Ask for connection config if live data is needed.
+- If THINKING: Break down complex problems. Compare options (first principles, pros/cons, risk vs upside). Provide summary, assumptions, conclusion, next action.
+- If BUSINESS_MODEL: Help design pricing, GTM, retention, revenue streams, cost structure. Realism over theory.
+- If POSITIONING: Clarify audience and problem. Generate one-line positioning, elevator pitch, landing page headline, value props.
+- If IMAGE_PROMPTING: Create high-quality prompts for image tools (subject, composition, style, lighting, color palette).
+- If EXECUTION: Convert strategy into action plans (7-day plan, MVP roadmap, validation checklist).
+
+The user is ${currentUser?.name}. 
+${isBrutalHonesty ? 'CRITICAL: BRUTAL HONESTY MODE IS ON. Respond with brutal honesty, explicitly highlighting critical flaws, blindspots, and weak assumptions directly without sugar-coating.' : ''}
+`;
+
       const response = await fetch(url.replace(/([^:]\/)\/+/g, "$1"), {
         method: 'POST',
         headers: {
@@ -138,11 +322,8 @@ export default function App() {
         body: JSON.stringify({
           model: azureConfig.deployment || azureConfig.model,
           messages: [
-            { role: 'system', content: `You are CockRoach, a strategic intelligence platform. The user is ${currentUser?.name}. ${isBrutalHonesty ? 'Respond with brutal honesty, highlighting flaws directly.' : ''}` },
-            ...newMessages.map(m => ({
-              role: m.role,
-              content: m.rawText ? m.rawText : (typeof m.content === 'string' ? m.content : '[File Attached]')
-            }))
+            { role: 'system', content: systemPrompt },
+            ...newMessagesForAPI
           ],
           temperature: 0.7,
         })
@@ -154,14 +335,49 @@ export default function App() {
       }
 
       const data = await response.json();
-      setMessages(prev => [...prev, { role: 'assistant', content: data.choices[0].message.content }]);
+      
+      const { data: insertedAsstMsg } = await supabase.from('messages').insert({
+        chat_id: currentChatId,
+        role: 'assistant',
+        content: data.choices[0].message.content
+      }).select().single();
+
+      if (insertedAsstMsg) {
+         setMessages(prev => [...prev, { id: insertedAsstMsg.id, role: 'assistant', content: insertedAsstMsg.content }]);
+      } else {
+         setMessages(prev => [...prev, { role: 'assistant', content: data.choices[0].message.content }]);
+      }
+
     } catch (error: any) {
       console.error(error);
-      setMessages(prev => [...prev, { role: 'assistant', content: `Neural connection interrupted: ${error.message}` }]);
+      const errorMsg = `Neural connection interrupted: ${error.message}`;
+      if (currentChatId) {
+        const { data: errData } = await supabase.from('messages').insert({
+          chat_id: currentChatId,
+          role: 'assistant',
+          content: errorMsg
+        }).select().single();
+        if (errData) {
+            setMessages(prev => [...prev, { id: errData.id, role: 'assistant', content: errData.content }]);
+            return;
+        }
+      }
+      setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
     } finally {
       setIsTyping(false);
     }
   };
+
+  const handleLogout = async () => {
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+  };
+
+  if (authChecking) {
+    return <div className="h-screen w-full bg-background flex items-center justify-center">
+       <Bot size={34} className="text-primary animate-pulse" />
+    </div>;
+  }
 
   if (!isAuthenticated) {
     return <ProfileSelector onSelect={() => setIsAuthenticated(true)} />;
@@ -204,6 +420,7 @@ export default function App() {
           <button 
             onClick={() => {
               setMessages([]);
+              setActiveChatId(null);
               setCurrentPage('chat');
             }} 
             className="w-full flex items-center justify-center gap-2 bg-primary text-white text-sm font-semibold h-10 rounded-xl hover:brightness-110 active:scale-[0.98] transition-all shadow-sm shadow-primary/20"
@@ -215,37 +432,6 @@ export default function App() {
 
         {/* Sidebar Navigation */}
         <div className="flex-1 overflow-y-auto px-3 py-1 space-y-6 layaa-scroll">
-          <div className="space-y-0.5">
-             <button 
-                onClick={() => setCurrentPage('chat')}
-                className={cn("layaa-nav-item w-full", currentPage === 'chat' && "layaa-nav-item-active")}
-              >
-               <MessageSquare size={16} />
-               <span>Brainstorming</span>
-             </button>
-             <button 
-                onClick={() => setCurrentPage('research')}
-                className={cn("layaa-nav-item w-full", currentPage === 'research' && "layaa-nav-item-active")}
-              >
-               <Search size={16} />
-               <span>Deep Research</span>
-             </button>
-             <button 
-                onClick={() => setCurrentPage('memory')}
-                className={cn("layaa-nav-item w-full", currentPage === 'memory' && "layaa-nav-item-active")}
-              >
-               <Brain size={16} />
-               <span>Memory</span>
-             </button>
-             <button 
-                onClick={() => setCurrentPage('projects')}
-                className={cn("layaa-nav-item w-full", currentPage === 'projects' && "layaa-nav-item-active")}
-              >
-               <FolderKanban size={16} />
-               <span>Macro Projects</span>
-             </button>
-          </div>
-
           <div className="pt-2">
             <h4 className="px-3 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">History</h4>
             <div className="space-y-0.5">
@@ -253,12 +439,15 @@ export default function App() {
                 <button 
                   key={historyItem.id} 
                   onClick={() => {
-                    setMessages(historyItem.messages as any);
+                    setActiveChatId(historyItem.id);
                     setCurrentPage('chat');
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-muted-foreground hover:bg-card/60 hover:text-foreground rounded-lg transition-all group"
+                  className={cn(
+                    "w-full flex items-center gap-2.5 px-3 py-2 text-sm text-muted-foreground hover:bg-card/60 hover:text-foreground rounded-lg transition-all group",
+                    activeChatId === historyItem.id && "bg-card/60 text-foreground"
+                  )}
                 >
-                   <div className="w-1.5 h-1.5 rounded-full bg-border group-hover:bg-primary/50 transition-colors" />
+                   <div className={cn("w-1.5 h-1.5 rounded-full transition-colors", activeChatId === historyItem.id ? "bg-primary" : "bg-border group-hover:bg-primary/50")} />
                    <span className="truncate flex-1 text-left">{historyItem.title}</span>
                 </button>
               ))}
@@ -290,7 +479,7 @@ export default function App() {
                 <Settings size={16} />
               </button>
               <button 
-                onClick={() => setIsAuthenticated(false)}
+                onClick={handleLogout}
                 className="p-1.5 rounded-lg transition-all text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                 title="Logout"
               >
@@ -394,33 +583,24 @@ export default function App() {
                       </h1>
                       <p className="text-muted-foreground max-w-md mx-auto text-[15px] leading-relaxed">
                         Good morning, <span className="text-foreground font-semibold tracking-wider text-[13px]">{currentUser?.name}</span>. 
-                        Your strategic intelligence platform is calibrated and ready for operations.
+                        CockRoach is primed in <span className="text-primary font-bold">{APP_MODES.find(m => m.id === activeMode)?.label}</span> mode.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full text-left mt-8">
-                      <button 
-                        onClick={() => setCurrentPage('research')}
-                        className="layaa-card layaa-card-interactive p-5 flex flex-col group"
-                      >
-                          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary mb-4 group-hover:scale-110 transition-transform">
-                            <Search size={20} />
-                          </div>
-                          <span className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1.5">Intelligence Gateway</span>
-                          <span className="text-sm font-bold text-foreground mb-2 group-hover:text-primary transition-colors">Start 10-Vector Deep Research</span>
-                          <p className="text-xs text-muted-foreground leading-relaxed">Execute a high-fidelity intelligence report covering Market Gap, Moats, and Scale Vectors.</p>
-                      </button>
-                      <button 
-                        onClick={() => setCurrentPage('projects')}
-                        className="layaa-card layaa-card-interactive p-5 flex flex-col group"
-                      >
-                          <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent mb-4 group-hover:scale-110 transition-transform">
-                            <FolderKanban size={20} />
-                          </div>
-                          <span className="text-[10px] font-bold text-accent uppercase tracking-widest mb-1.5">Strategic Workspace</span>
-                          <span className="text-sm font-bold text-foreground mb-2 group-hover:text-primary transition-colors">Macro Project Pipeline</span>
-                          <p className="text-xs text-muted-foreground leading-relaxed">Manage your tactical roadmaps and monitor active CockRoach neural swarms in your workspace.</p>
-                      </button>
+                       {APP_MODES.slice(0, 4).map(mode => (
+                         <button 
+                           key={mode.id}
+                           onClick={() => setActiveMode(mode.id)}
+                           className={cn("layaa-card layaa-card-interactive p-5 flex flex-col group", activeMode === mode.id && "ring-2 ring-primary")}
+                         >
+                             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary mb-4 group-hover:scale-110 transition-transform">
+                               <mode.icon size={20} />
+                             </div>
+                             <span className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1.5">{mode.label}</span>
+                             <p className="text-xs text-muted-foreground leading-relaxed">Engage CockRoach for {mode.label.toLowerCase()} framework intelligence.</p>
+                         </button>
+                       ))}
                     </div>
                   </div>
                 </div>
@@ -460,6 +640,7 @@ export default function App() {
                       </div>
                     </div>
                   )}
+                  <div ref={messagesEndRef} className="h-4 w-full opacity-0" />
                 </div>
               )}
             </div>
@@ -469,8 +650,11 @@ export default function App() {
         {/* Message Input - Bottom Panel */}
         {currentPage === 'chat' && (
           <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-background via-background to-transparent pt-12 z-20">
-             <div className="max-w-3xl mx-auto relative group">
-                <div className="bg-card border border-border rounded-2xl overflow-hidden shadow-xl focus-within:border-primary/50 transition-all ring-primary/5 focus-within:ring-4">
+             {isModeSelectOpen && (
+               <div className="fixed inset-0 z-40" onClick={() => setIsModeSelectOpen(false)} />
+             )}
+             <div className="max-w-3xl mx-auto relative group z-50">
+                <div className="bg-card/90 backdrop-blur-2xl border border-white/10 rounded-[28px] shadow-[0_12px_40px_-12px_rgba(0,0,0,0.5)] focus-within:border-primary/50 transition-all focus-within:shadow-[0_12px_40px_-12px_rgba(255,255,255,0.1)] focus-within:ring-1 focus-within:ring-primary/30">
                   <textarea 
                     placeholder="Brief CockRoach..."
                     value={input}
@@ -481,11 +665,11 @@ export default function App() {
                         handleSendMessage();
                       }
                     }}
-                    className="w-full bg-transparent border-none p-4 pr-12 text-sm text-foreground placeholder:text-muted-foreground focus:ring-0 resize-none min-h-[56px] max-h-[200px] layaa-scroll"
+                    className="w-full bg-transparent border-none p-5 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 resize-none min-h-[64px] max-h-[200px] layaa-scroll rounded-t-[28px]"
                     rows={1}
                   />
-                  <div className="flex items-center justify-between px-4 py-2 bg-surface-mid border-t border-border/50">
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between px-5 py-3 bg-surface-mid/40 rounded-b-[28px] border-t border-white/5 backdrop-blur-md">
+                    <div className="flex items-center gap-3">
                        <input 
                          type="file" 
                          ref={fileInputRef} 
@@ -494,35 +678,47 @@ export default function App() {
                        />
                        <button 
                          onClick={() => fileInputRef.current?.click()} 
-                         className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-background rounded-lg transition-all"
+                         className="p-2 text-muted-foreground hover:text-foreground hover:bg-white/5 rounded-xl transition-all"
                          title="Attach File"
                        >
                         <Plus size={18} />
                        </button>
-                       <button 
-                         onClick={() => {
-                           setMessages([]);
-                           setInput('');
-                         }} 
-                         className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
-                         title="Clear Conversation"
-                       >
-                        <Trash2 size={18} />
-                       </button>
-                       <div className="h-4 w-[1px] bg-border mx-1" />
-                       <div className="flex items-center gap-1.5 px-2.5 py-1 bg-background border border-border rounded-full shadow-sm">
-                          <div className="w-1.5 h-1.5 bg-success rounded-full shadow-[0_0_8px_rgba(45,90,39,0.5)]" />
-                          <span className="text-[10px] font-bold text-primary uppercase tracking-[0.2em] px-1">CockRoach Neural</span>
+                       <div className="h-5 w-[1px] bg-border mx-1" />
+                       <div className="relative">
+                          {isModeSelectOpen && (
+                              <div className="absolute bottom-full mb-4 left-0 w-64 bg-background/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-[0_16px_40px_-12px_rgba(0,0,0,0.8)] z-50 animate-in fade-in zoom-in-95 origin-bottom-left">
+                                  <div className="max-h-[320px] overflow-y-auto layaa-scroll p-2 space-y-0.5">
+                                      {APP_MODES.map(mode => (
+                                          <button
+                                              key={mode.id}
+                                              onClick={() => { setActiveMode(mode.id); setIsModeSelectOpen(false); }}
+                                              className={cn("w-full flex items-center gap-3 px-3 py-2.5 text-[13px] font-medium text-left rounded-xl transition-all", activeMode === mode.id ? "text-primary bg-primary/10 shadow-inner" : "text-foreground hover:bg-white/5")}
+                                          >
+                                              <mode.icon size={16} className={activeMode === mode.id ? "text-primary" : "text-muted-foreground"} />
+                                              <span className="truncate tracking-wide">{mode.label}</span>
+                                              {activeMode === mode.id && <Pin size={12} className="ml-auto opacity-50" />}
+                                          </button>
+                                      ))}
+                                  </div>
+                              </div>
+                          )}
+                          <button 
+                             onClick={() => setIsModeSelectOpen(!isModeSelectOpen)}
+                             className={cn("flex items-center gap-2 px-3 py-1.5 bg-background border rounded-full shadow-sm hover:border-primary/50 transition-all", isModeSelectOpen ? "border-primary/50 ring-2 ring-primary/20 bg-primary/5" : "border-white/10")}
+                          >
+                             <div className="w-2 h-2 bg-success rounded-full shadow-[0_0_8px_rgba(45,90,39,0.8)]" />
+                             <span className="text-[11px] font-bold text-primary uppercase tracking-[0.15em] px-1">{APP_MODES.find(m => m.id === activeMode)?.label || 'Neural'}</span>
+                          </button>
                        </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                       <span className="text-[10px] font-mono text-muted-foreground px-2">Enter ↵</span>
+                    <div className="flex items-center gap-3">
+                       <span className="text-[11px] font-mono font-medium text-muted-foreground px-2">Return ↵</span>
                        <button 
                          onClick={handleSendMessage}
                          disabled={!input.trim() || isTyping}
-                         className="bg-primary disabled:opacity-50 hover:brightness-110 text-white p-1.5 rounded-lg transition-all active:scale-95 shadow-sm shadow-primary/30"
+                         className="bg-primary disabled:opacity-50 hover:brightness-[1.15] text-background p-2 rounded-xl transition-all active:scale-90 shadow-[0_0_15px_rgba(var(--primary),0.4)] disabled:shadow-none"
                        >
-                        <ChevronRight size={20} />
+                        <ChevronRight size={18} strokeWidth={3} />
                        </button>
                     </div>
                   </div>
@@ -554,47 +750,11 @@ export default function App() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 layaa-scroll">
-           <div className="space-y-3">
-             <h4 className="text-[11px] font-bold text-foreground flex items-center gap-2 uppercase tracking-tight">
-               <div className="w-1.5 h-1.5 rounded-sm bg-accent" />
-               Latest Insights
-             </h4>
-             <div className="layaa-card p-3 space-y-2.5 bg-background shadow-xs">
-                <p className="text-[12px] text-muted-foreground leading-relaxed">"Strategic direction shift noted: prioritize hyper-local Indian SME constraints over general APAC models."</p>
-                <div className="flex items-center justify-between pt-1 border-t border-border/50">
-                  <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest italic">Confidence Index: 94%</span>
-                  <Pin size={10} className="text-primary rotate-45" />
-                </div>
-             </div>
-           </div>
-
-           <div className="space-y-3">
-             <h4 className="text-[11px] font-bold text-foreground flex items-center gap-2 uppercase tracking-tight">
-               <div className="w-1.5 h-1.5 rounded-sm bg-primary" />
-               Active Knowledge
-             </h4>
-             <div className="space-y-1.5">
-                <div className="flex items-center justify-between px-3 py-2 bg-surface-mid border border-border rounded-xl text-[10px] group cursor-default shadow-xs hover:border-primary-border transition-all">
-                  <span className="text-foreground font-medium">market_dynamics_delhi_ncr.pdf</span>
-                  <span className="text-[9px] text-muted-foreground font-mono">1.2MB</span>
-                </div>
-                <div className="flex items-center justify-between px-3 py-2 bg-surface-mid border border-border rounded-xl text-[10px] group cursor-default shadow-xs hover:border-primary-border transition-all">
-                  <span className="text-foreground font-medium">vendor_risk_matrix.csv</span>
-                  <span className="text-[9px] text-muted-foreground font-mono">45KB</span>
-                </div>
-             </div>
-           </div>
-        </div>
-
-        <div className="mt-auto p-4 border-t border-border bg-sidebar/50">
-           <div className="p-3 bg-surface-mid border border-border rounded-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-8 h-8 bg-black/10 -rotate-45 translate-x-3 -translate-y-3" />
-              <span className="text-[9px] font-bold text-muted-foreground uppercase block mb-1.5 tracking-widest">Active Intelligence Phase</span>
-              <p className="text-[11px] text-muted-foreground leading-snug font-medium italic">
-                CockRoach is currently analyzing the logistics gap in Tier-2 Indian cities based on your uploaded dataset.
-              </p>
-           </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 layaa-scroll flex flex-col items-center justify-center text-center">
+           <Brain size={32} className="text-muted-foreground/30 mb-2" />
+           <p className="text-[11px] font-medium text-muted-foreground leading-relaxed max-w-[200px]">
+              No active intelligence streams detected. Upload files or query CockRoach to populate dynamic context arrays.
+           </p>
         </div>
       </motion.aside>
 

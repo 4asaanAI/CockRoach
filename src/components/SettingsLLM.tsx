@@ -1,6 +1,8 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppStore } from '../store';
+import { supabase } from '../lib/supabase';
+import { toast } from 'sonner';
 import { 
   Key, 
   Cpu, 
@@ -30,8 +32,54 @@ export default function SettingsLLM() {
     password: ''
   });
 
-  const handleProfileSave = () => {
+  const [localAzureConfig, setLocalAzureConfig] = React.useState(azureConfig);
+
+  React.useEffect(() => {
+    setLocalAzureConfig(azureConfig);
+  }, [azureConfig]);
+
+  const handleProfileSave = async () => {
     updateCurrentUser(profileData);
+    try {
+      if (!currentUser) return;
+      const { error } = await supabase.from('users').update({
+        name: profileData.name,
+        email: profileData.email,
+        avatar: profileData.avatar,
+        updated_at: new Date().toISOString()
+      }).eq('id', currentUser.id);
+      
+      if (error) {
+         toast.error(`Identity Update Failed: ${error.message}`);
+      } else {
+         toast.success('Identity updated and synced.');
+      }
+    } catch (err: any) {
+      toast.error(`Update Error: ${err.message}`);
+    }
+  };
+
+  const handleAzureSync = async () => {
+     setAzureConfig(localAzureConfig);
+     try {
+       if (!currentUser) return;
+       const { error } = await supabase.from('azure_configs').update({
+         api_key: localAzureConfig.apiKey,
+         endpoint: localAzureConfig.endpoint,
+         deployment: localAzureConfig.deployment,
+         model: localAzureConfig.model,
+         version: localAzureConfig.version,
+         updated_at: new Date().toISOString()
+       }).eq('user_id', currentUser.id);
+       
+       if (error) {
+          toast.error(`Config Sync Failed: ${error.message}`);
+       } else {
+          toast.success('Configuration synced to remote vault.');
+       }
+     } catch (err: any) {
+        toast.error(`Sync Error: ${err.message}`);
+     }
   };
 
   const PROVIDERS = [
@@ -265,8 +313,8 @@ export default function SettingsLLM() {
                       <input 
                         type="password" 
                         placeholder={activeProvider === 'azure' ? "Azure API Key" : "sk-••••••••••••••••••••••••"}
-                        value={activeProvider === 'azure' ? azureConfig.apiKey : ''}
-                        onChange={(e) => activeProvider === 'azure' && setAzureConfig({ ...azureConfig, apiKey: e.target.value })}
+                        value={activeProvider === 'azure' ? localAzureConfig.apiKey : ''}
+                        onChange={(e) => activeProvider === 'azure' && setLocalAzureConfig({ ...localAzureConfig, apiKey: e.target.value })}
                         className="w-full bg-background border border-border rounded-xl py-3 pl-10 pr-4 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all font-mono placeholder:text-muted-foreground/50 shadow-inner"
                       />
                     </div>
@@ -280,8 +328,8 @@ export default function SettingsLLM() {
                     <input 
                       type="text" 
                       placeholder={activeProvider === 'azure' ? "https://{resource}.openai.azure.com/" : "https://api.openai.com/v1"}
-                      value={activeProvider === 'azure' ? azureConfig.endpoint : ''}
-                      onChange={(e) => activeProvider === 'azure' && setAzureConfig({ ...azureConfig, endpoint: e.target.value })}
+                      value={activeProvider === 'azure' ? localAzureConfig.endpoint : ''}
+                      onChange={(e) => activeProvider === 'azure' && setLocalAzureConfig({ ...localAzureConfig, endpoint: e.target.value })}
                       className="w-full bg-background border border-border rounded-xl py-3 px-4 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all font-mono placeholder:text-muted-foreground/50 shadow-inner"
                     />
                   </div>
@@ -294,8 +342,8 @@ export default function SettingsLLM() {
                        <input 
                          type="text" 
                          placeholder="Azure Deployment ID"
-                         value={azureConfig.deployment}
-                         onChange={(e) => setAzureConfig({ ...azureConfig, deployment: e.target.value })}
+                         value={localAzureConfig.deployment}
+                         onChange={(e) => setLocalAzureConfig({ ...localAzureConfig, deployment: e.target.value })}
                          className="w-full bg-background border border-border rounded-xl py-3 px-4 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all font-mono shadow-inner"
                        />
                     </div>
@@ -346,7 +394,9 @@ export default function SettingsLLM() {
                  <button className="px-6 py-2.5 text-[11px] font-bold text-muted-foreground hover:text-foreground transition-all uppercase tracking-widest">
                   Withdraw Changes
                  </button>
-                 <button className="px-8 py-2.5 bg-primary hover:brightness-110 text-white text-[11px] font-bold rounded-lg transition-all shadow-lg shadow-primary/20 uppercase tracking-widest flex items-center gap-2 active:scale-95">
+                 <button 
+                  onClick={handleAzureSync}
+                  className="px-8 py-2.5 bg-primary hover:brightness-110 text-white text-[11px] font-bold rounded-lg transition-all shadow-lg shadow-primary/20 uppercase tracking-widest flex items-center gap-2 active:scale-95">
                   <Save size={14} />
                   <span>Sync Configuration</span>
                  </button>

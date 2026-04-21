@@ -34,11 +34,13 @@ import {
   RefreshCw,
   MoreHorizontal,
   FileDown,
+  Globe,
 } from 'lucide-react';
 import DocumentViewer from './components/DocumentViewer';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import mermaid from 'mermaid';
 
 import { supabase } from './lib/supabase';
 import SettingsLLM from './components/SettingsLLM';

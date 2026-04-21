@@ -71,8 +71,8 @@ export default function ProfileSelector({ onSelect }: { onSelect: () => void }) 
         <h1 className="text-5xl font-black text-foreground tracking-tight">
           Cock<span className="text-primary">Roach</span>
         </h1>
-        <p className="text-muted-foreground text-[15px] font-medium italic">
-          Not a Unicorn. Better!
+        <p className="text-muted-foreground text-[14px] font-medium italic max-w-sm text-center">
+          The startups that survive aren't unicorns, they're cockroaches. Resilient! Ugly! Unstoppable!
         </p>
       </motion.div>
 

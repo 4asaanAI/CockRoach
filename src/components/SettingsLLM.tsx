@@ -18,9 +18,62 @@ import {
   AlertCircle,
   Upload,
   Brain,
+  RefreshCw,
+  Pencil,
+  Check,
+  X,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import SettingsAgentBrain from './SettingsAgentBrain';
+
+// ── Azure Retail Prices API ───────────────────────────────────────────────────
+type FetchStatus = 'idle' | 'fetching' | 'found' | 'not-found' | 'error';
+
+async function fetchAzureOpenAIPricing(
+  modelName: string
+): Promise<{ input: number; output: number; status: FetchStatus }> {
+  try {
+    // Normalize: 'gpt-5.3-chat' → 'GPT-5.3', 'gpt-4o' → 'GPT-4o'
+    const normalized = modelName
+      .replace(/-chat$/i, '')
+      .replace(/-preview$/i, '')
+      .replace(/^gpt-/i, 'GPT-');
+
+    const filter = `serviceName eq 'Azure OpenAI' and contains(tolower(skuName), tolower('${normalized}'))`;
+    const url = `https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=${encodeURIComponent(filter)}`;
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const data = await res.json();
+    const items: any[] = data.Items ?? [];
+    if (!items.length) return { input: 0, output: 0, status: 'not-found' };
+
+    let input = 0;
+    let output = 0;
+
+    for (const item of items) {
+      const meter = (item.meterName ?? '').toLowerCase();
+      const unit  = (item.unitOfMeasure ?? '').toLowerCase();
+
+      // Convert retailPrice to $/1M tokens
+      let perMillion = item.retailPrice as number;
+      if (unit.includes('1k') || unit.includes('1,000 token')) perMillion *= 1000;
+      // if unitOfMeasure is already "1M tokens" or "1,000,000", leave as-is
+
+      const isInput  = meter.includes('input')  || meter.includes('prompt');
+      const isOutput = meter.includes('output') || meter.includes('completion');
+
+      if (isInput  && !input)  input  = perMillion;
+      if (isOutput && !output) output = perMillion;
+    }
+
+    if (input || output) return { input, output, status: 'found' };
+    return { input: 0, output: 0, status: 'not-found' };
+  } catch {
+    return { input: 0, output: 0, status: 'error' };
+  }
+}
 
 const SETTINGS_TABS = [
   { id: 'identity', label: 'Identity' },
@@ -30,8 +83,68 @@ const SETTINGS_TABS = [
 
 export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { prompt: number; completion: number } }) {
   const [activeTab, setActiveTab] = React.useState<'identity' | 'llm' | 'brain'>('identity');
-  const { azureConfig, setAzureConfig, currentUser, updateCurrentUser } = useAppStore();
+  const { azureConfig, setAzureConfig, currentUser, updateCurrentUser, pricingRates, setPricingRates } = useAppStore();
   const [connectionStatus, setConnectionStatus] = React.useState<'unknown' | 'ok' | 'error'>('unknown');
+
+  // ── Pricing state ──────────────────────────────────────────────────────────
+  const [fetchStatus, setFetchStatus] = React.useState<FetchStatus>('idle');
+  const [editingRates, setEditingRates] = React.useState(false);
+  const [draftInput,  setDraftInput]  = React.useState('');
+  const [draftOutput, setDraftOutput] = React.useState('');
+
+  const effectiveInput  = pricingRates.inputPerMillion;
+  const effectiveOutput = pricingRates.outputPerMillion;
+
+  const triggerPricingFetch = React.useCallback(async (model: string) => {
+    setFetchStatus('fetching');
+    const result = await fetchAzureOpenAIPricing(model);
+    setFetchStatus(result.status);
+    if (result.status === 'found') {
+      setPricingRates({
+        inputPerMillion:  result.input,
+        outputPerMillion: result.output,
+        isCustom: false,
+        lastFetched: new Date().toISOString(),
+      });
+      toast.success(`Live pricing loaded for ${model}`);
+    } else if (result.status === 'not-found') {
+      toast.info(`${model} not in Azure pricing catalog — set custom rates below`);
+    } else {
+      toast.error('Pricing fetch failed — check connection');
+    }
+  }, [setPricingRates]);
+
+  // Auto-fetch on first open of LLM tab (once per session if not already set)
+  React.useEffect(() => {
+    if (activeTab !== 'llm') return;
+    if (pricingRates.isCustom) return;
+    if (pricingRates.lastFetched) return; // already fetched this session
+    triggerPricingFetch(azureConfig.model || 'gpt-5.3-chat');
+  }, [activeTab]);
+
+  const saveCustomRates = () => {
+    const inp = parseFloat(draftInput);
+    const out = parseFloat(draftOutput);
+    if (isNaN(inp) || isNaN(out) || inp < 0 || out < 0) {
+      toast.error('Enter valid non-negative numbers');
+      return;
+    }
+    setPricingRates({ inputPerMillion: inp, outputPerMillion: out, isCustom: true, lastFetched: new Date().toISOString() });
+    setEditingRates(false);
+    toast.success('Custom rates saved');
+  };
+
+  const startEditing = () => {
+    setDraftInput(effectiveInput ? effectiveInput.toFixed(2) : '');
+    setDraftOutput(effectiveOutput ? effectiveOutput.toFixed(2) : '');
+    setEditingRates(true);
+  };
+
+  const sessionCost = sessionTokens
+    ? ((sessionTokens.prompt / 1_000_000) * effectiveInput + (sessionTokens.completion / 1_000_000) * effectiveOutput)
+    : 0;
+  // ── End pricing state ──────────────────────────────────────────────────────
+
   const [personalization, setPersonalization] = React.useState({
     tone: 'Professional', warm: 'Default', enthusiastic: 'Default',
     headers_lists: 'Default', emoji: 'Default',
@@ -59,12 +172,6 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
     else toast.success('Personalization saved');
   };
 
-  // Cost in USD (GPT-4o tier approx pricing)
-  const INPUT_COST_PER_1M = 5.0;
-  const OUTPUT_COST_PER_1M = 15.0;
-  const sessionCost = sessionTokens
-    ? ((sessionTokens.prompt / 1_000_000) * INPUT_COST_PER_1M + (sessionTokens.completion / 1_000_000) * OUTPUT_COST_PER_1M)
-    : 0;
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [activeProvider, setActiveProvider] = React.useState<string | null>('azure');
   const [profileData, setProfileData] = React.useState({
@@ -125,7 +232,7 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
   };
 
   const PROVIDERS = [
-    { id: 'azure', name: 'Azure AI Foundry', icon: Cloud, status: connectionStatus === 'ok' ? 'active' : connectionStatus === 'error' ? 'error' : 'active', description: 'Enterprise-grade neural orchestration — active provider.', knowledge: [azureConfig.model || 'gpt-4o', 'Azure OpenAI GPT-4', 'Llama-3-70B (Foundry)'] },
+    { id: 'azure', name: 'Azure AI Foundry', icon: Cloud, status: connectionStatus === 'ok' ? 'active' : connectionStatus === 'error' ? 'error' : 'active', description: 'Enterprise-grade neural orchestration — active provider.', knowledge: [azureConfig.model || 'gpt-5.3-chat', `Deployment: ${azureConfig.deployment}`, 'Azure OpenAI Service'] },
     { id: 'google', name: 'Google Gemini', icon: Globe, status: 'inactive', description: 'Multimodal mastery with 1M+ context.', knowledge: ['Gemini 2.0 Flash', 'Gemini 1.5 Pro'] },
     { id: 'openai', name: 'OpenAI', icon: Cpu, status: 'inactive', description: 'Industry standard for reasoning and tool-use.', knowledge: ['GPT-4o', 'o1 series'] },
     { id: 'anthropic', name: 'Anthropic', icon: ShieldCheck, status: 'inactive', description: 'Nuanced writing and massive context windows.', knowledge: ['Claude 3.5 Sonnet', 'Claude 3 Opus'] },
@@ -532,26 +639,48 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
         )}
       </AnimatePresence>
 
-      {/* Resource Utilization — real session token tracking */}
+      {/* Session Token Usage + Pricing */}
       <div className="layaa-card p-8 space-y-6 bg-card backdrop-blur-sm">
-        <div className="flex items-center justify-between">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <h3 className="text-lg font-bold text-foreground tracking-tight">Session Token Usage</h3>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Live Token Consumption & Estimated Cost (USD)</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">
+              Live Consumption · {azureConfig.model || 'GPT-5.3'} · Estimated Cost (USD)
+            </p>
           </div>
-          <div className="text-right">
+          <div className="text-right shrink-0">
             <span className="text-3xl font-bold text-foreground font-mono tracking-tighter">
-              ${sessionCost.toFixed(4)}
+              {(effectiveInput || effectiveOutput) ? `$${sessionCost.toFixed(4)}` : '—'}
             </span>
             <p className="text-[10px] text-primary font-bold uppercase tracking-[0.2em] mt-1 italic">Session Cost (USD)</p>
           </div>
         </div>
 
+        {/* Token stat cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { label: 'Input Tokens', value: (sessionTokens?.prompt || 0).toLocaleString(), sub: `$${(((sessionTokens?.prompt || 0) / 1_000_000) * INPUT_COST_PER_1M).toFixed(4)}` },
-            { label: 'Output Tokens', value: (sessionTokens?.completion || 0).toLocaleString(), sub: `$${(((sessionTokens?.completion || 0) / 1_000_000) * OUTPUT_COST_PER_1M).toFixed(4)}` },
-            { label: 'Total Tokens', value: ((sessionTokens?.prompt || 0) + (sessionTokens?.completion || 0)).toLocaleString(), sub: `$${INPUT_COST_PER_1M}/1M in · $${OUTPUT_COST_PER_1M}/1M out` },
+            {
+              label: 'Input Tokens',
+              value: (sessionTokens?.prompt || 0).toLocaleString(),
+              sub: effectiveInput
+                ? `$${(((sessionTokens?.prompt || 0) / 1_000_000) * effectiveInput).toFixed(4)}`
+                : '—',
+            },
+            {
+              label: 'Output Tokens',
+              value: (sessionTokens?.completion || 0).toLocaleString(),
+              sub: effectiveOutput
+                ? `$${(((sessionTokens?.completion || 0) / 1_000_000) * effectiveOutput).toFixed(4)}`
+                : '—',
+            },
+            {
+              label: 'Total Tokens',
+              value: ((sessionTokens?.prompt || 0) + (sessionTokens?.completion || 0)).toLocaleString(),
+              sub: (effectiveInput || effectiveOutput)
+                ? `$${effectiveInput.toFixed(2)}/1M in · $${effectiveOutput.toFixed(2)}/1M out`
+                : 'Set rates below',
+            },
           ].map(stat => (
             <div key={stat.label} className="bg-background border border-border p-4 rounded-xl">
               <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest block mb-1">{stat.label}</span>
@@ -561,10 +690,121 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
           ))}
         </div>
 
-        <div className="p-4 bg-background/60 border border-border/50 rounded-xl">
-          <p className="text-[10px] text-muted-foreground leading-relaxed">
-            Pricing estimate based on Azure OpenAI GPT-4o rates: <span className="text-foreground font-mono">$5.00/1M input</span> · <span className="text-foreground font-mono">$15.00/1M output</span>. Actual Azure billing may vary by deployment tier. Token counts reset when you refresh the page.
-          </p>
+        {/* Pricing rates panel */}
+        <div className="bg-background border border-border rounded-xl overflow-hidden">
+          {/* Pricing header */}
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/60">
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] font-bold text-foreground uppercase tracking-widest">Pricing Rates</span>
+              {/* Source badge */}
+              {fetchStatus === 'fetching' && (
+                <span className="flex items-center gap-1 text-[9px] font-bold text-primary uppercase tracking-widest px-2 py-0.5 bg-primary/10 rounded-full animate-pulse">
+                  <RefreshCw size={9} className="animate-spin" /> Fetching…
+                </span>
+              )}
+              {fetchStatus === 'found' && !pricingRates.isCustom && (
+                <span className="text-[9px] font-bold text-green-500 uppercase tracking-widest px-2 py-0.5 bg-green-500/10 rounded-full">
+                  ● Live from Azure
+                </span>
+              )}
+              {pricingRates.isCustom && (
+                <span className="text-[9px] font-bold text-primary uppercase tracking-widest px-2 py-0.5 bg-primary/10 rounded-full">
+                  ● Custom
+                </span>
+              )}
+              {fetchStatus === 'not-found' && !pricingRates.isCustom && (
+                <span className="text-[9px] font-bold text-yellow-500 uppercase tracking-widest px-2 py-0.5 bg-yellow-500/10 rounded-full">
+                  ● Not in catalog
+                </span>
+              )}
+              {fetchStatus === 'error' && (
+                <span className="text-[9px] font-bold text-destructive uppercase tracking-widest px-2 py-0.5 bg-destructive/10 rounded-full">
+                  ● Fetch failed
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {pricingRates.lastFetched && !pricingRates.isCustom && (
+                <span className="text-[9px] text-muted-foreground/50 font-mono hidden md:block">
+                  Updated {new Date(pricingRates.lastFetched).toLocaleTimeString()}
+                </span>
+              )}
+              <button
+                onClick={() => triggerPricingFetch(azureConfig.model || 'gpt-5.3-chat')}
+                disabled={fetchStatus === 'fetching'}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-mid border border-border hover:border-primary/40 rounded-lg text-[10px] font-bold text-muted-foreground hover:text-foreground transition-all disabled:opacity-40 uppercase tracking-widest"
+              >
+                <RefreshCw size={10} className={fetchStatus === 'fetching' ? 'animate-spin' : ''} />
+                Refresh
+              </button>
+              {!editingRates ? (
+                <button
+                  onClick={startEditing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-lg text-[10px] font-bold text-primary transition-all uppercase tracking-widest"
+                >
+                  <Pencil size={10} /> Custom
+                </button>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <button onClick={saveCustomRates}
+                    className="p-1.5 bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-lg text-primary transition-all">
+                    <Check size={12} />
+                  </button>
+                  <button onClick={() => setEditingRates(false)}
+                    className="p-1.5 bg-surface-mid border border-border hover:border-border/80 rounded-lg text-muted-foreground transition-all">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Rate fields */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-border/40">
+            {[
+              { label: 'Input (Prompt)', key: 'input' as const, value: effectiveInput, draft: draftInput, setDraft: setDraftInput },
+              { label: 'Output (Completion)', key: 'output' as const, value: effectiveOutput, draft: draftOutput, setDraft: setDraftOutput },
+            ].map(({ label, value, draft, setDraft }) => (
+              <div key={label} className="px-5 py-4">
+                <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest mb-2">{label}</p>
+                {editingRates ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground text-[13px]">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={draft}
+                      onChange={e => setDraft(e.target.value)}
+                      placeholder="0.00"
+                      className="flex-1 bg-background border border-primary/40 rounded-lg px-3 py-1.5 text-[13px] font-mono text-foreground focus:outline-none focus:border-primary/70 transition-all"
+                    />
+                    <span className="text-muted-foreground text-[11px] shrink-0">/ 1M tokens</span>
+                  </div>
+                ) : (
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-[22px] font-bold font-mono text-foreground">
+                      {value ? `$${value.toFixed(2)}` : '—'}
+                    </span>
+                    {value > 0 && <span className="text-[10px] text-muted-foreground/60">per 1M tokens</span>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Footer note */}
+          <div className="px-5 py-3 bg-background/40 border-t border-border/40">
+            {fetchStatus === 'not-found' && !pricingRates.isCustom ? (
+              <p className="text-[10px] text-yellow-500/80 leading-relaxed">
+                <strong>{azureConfig.model}</strong> is not listed in the Azure Retail Prices catalog (preview or enterprise deployment). Click <strong>Custom</strong> to enter your contracted rates manually.
+              </p>
+            ) : (
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                Rates are queried from the <span className="font-mono text-foreground/70">prices.azure.com</span> public API for <strong>{azureConfig.model}</strong>. Actual billing depends on your Azure subscription tier and commitment discounts. Token counts reset on page refresh.
+              </p>
+            )}
+          </div>
         </div>
       </div>
       </div>}

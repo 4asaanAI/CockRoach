@@ -41,6 +41,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import mermaid from 'mermaid';
+import { detectUrls, scrapeUrl, getUrlDomain, buildUrlContext, type UrlPreview } from './lib/url-scraper';
+import MermaidDiagram from './components/MermaidDiagram';
 
 import { supabase } from './lib/supabase';
 import SettingsLLM from './components/SettingsLLM';
@@ -74,7 +76,11 @@ const MD_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = 
   em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
   blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-4 my-3 text-muted-foreground italic">{children}</blockquote>,
   code: ({children, className}: any) => {
-    const isBlock = className?.includes('language-');
+    const lang = className?.replace('language-', '');
+    if (lang === 'mermaid') {
+      return <MermaidDiagram code={String(children).trim()} />;
+    }
+    const isBlock = !!className?.includes('language-');
     return isBlock
       ? <code className="block bg-background border border-border rounded-lg p-3 text-[12px] font-mono text-foreground overflow-x-auto my-3 whitespace-pre">{children}</code>
       : <code className="bg-background border border-border rounded px-1.5 py-0.5 text-[12px] font-mono text-primary">{children}</code>;
@@ -107,7 +113,7 @@ export default function App() {
 
   // Chat State
   const [input, setInput] = React.useState('');
-  const [messages, setMessages] = React.useState<{ id?: string, role: 'user' | 'assistant', content: string, rawText?: string }[]>([]);
+  const [messages, setMessages] = React.useState<{ id?: string, role: 'user' | 'assistant', content: string, rawText?: string, isSummary?: boolean }[]>([]);
   const [isTyping, setIsTyping] = React.useState(false);
   const [streamingContent, setStreamingContent] = React.useState('');
   const chatScrollRef = React.useRef<HTMLDivElement>(null);
@@ -129,6 +135,9 @@ export default function App() {
   const [searchResults, setSearchResults] = React.useState<{ chats: any[]; messages: any[] }>({ chats: [], messages: [] });
   const [sharedChatBanner, setSharedChatBanner] = React.useState<string | null>(null);
   const [quickMemory, setQuickMemory] = React.useState('');
+  const [urlPreviews, setUrlPreviews] = React.useState<Map<string, UrlPreview>>(new Map());
+  // msgId → original document content (for "View Full Report" action on summary msgs)
+  const [summaryMeta, setSummaryMeta] = React.useState<Map<string, string>>(new Map());
   const searchRef = React.useRef<HTMLInputElement>(null);
 
   const IDEA_KEYWORDS = ['idea', 'startup', 'app', 'platform', 'saas', 'business', 'product', 'build', 'create', 'launch', 'solve', 'monetize', 'users', 'customers', 'service', 'tool', 'software', 'company'];
@@ -181,7 +190,7 @@ export default function App() {
            api_key: 'DKUDyLkncgn1VtOAfJAA9wQdRAOrbQCD2bjLnme8dTlfElC5n1mLJQQJ99CDACYeBjFXJ3w3AAAAACOGNEId',
            endpoint: 'https://layaaos.cognitiveservices.azure.com/',
            deployment: 'CockRoach_2.0',
-           model: 'gpt-5.1-chat',
+           model: 'gpt-5.3-chat',
            version: '2024-12-01-preview'
          };
          const { error: insertConfigError } = await supabase.from('azure_configs').insert(defaultConfig);
@@ -508,10 +517,11 @@ export default function App() {
         userName: currentUser.name, isBrutalHonesty,
       });
 
+      const urlCtx = buildUrlContext(urlPreviews);
       const apiMessages = [
         { role: 'system', content: builtPrompt },
         ...messages.map(m => ({ role: m.role, content: m.rawText || m.content })),
-        { role: 'user', content: userMsg },
+        { role: 'user', content: urlCtx ? `${userMsg}${urlCtx}` : userMsg },
       ];
 
       setIsTyping(false);
@@ -519,6 +529,7 @@ export default function App() {
         setStreamingContent(partial);
       });
       setStreamingContent('');
+      setUrlPreviews(new Map());
 
       const { data: insertedAsstMsg } = await supabase.from('messages').insert({
         chat_id: currentChatId,
@@ -596,6 +607,31 @@ export default function App() {
     setMemoryItems(memoryItems.filter(m => m.id !== id));
   };
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    const urls = detectUrls(val);
+    for (const url of urls) {
+      if (!urlPreviews.has(url)) {
+        setUrlPreviews(prev => new Map(prev).set(url, { url, status: 'fetching' }));
+        scrapeUrl(url)
+          .then(data => setUrlPreviews(prev => new Map(prev).set(url, { url, status: 'ready', data })))
+          .catch(err => setUrlPreviews(prev => new Map(prev).set(url, { url, status: 'error', error: err.message })));
+      }
+    }
+    // Remove previews for URLs no longer in input
+    const current = new Set(urls);
+    setUrlPreviews(prev => {
+      const next = new Map(prev);
+      for (const [k] of next) if (!current.has(k)) next.delete(k);
+      return next;
+    });
+  };
+
+  const removeUrlPreview = (url: string) => {
+    setUrlPreviews(prev => { const next = new Map(prev); next.delete(url); return next; });
+  };
+
   const handleDownloadChat = () => {
     if (!messages.length) { toast.error('No messages to download'); return; }
     const chatTitle = chatHistory.find(c => c.id === activeChatId)?.title || 'chat';
@@ -609,6 +645,50 @@ export default function App() {
     a.href = url; a.download = `${chatTitle.slice(0, 40).replace(/[^a-z0-9]/gi, '-')}.md`; a.click();
     URL.revokeObjectURL(url);
     toast.success('Chat downloaded as .md');
+  };
+
+  const handleOpenAsDocument = async (content: string) => {
+    setDocumentViewerContent(content);
+    if (!currentUser || isTyping || streamingContent) return;
+
+    setIsTyping(true);
+    setStreamingContent('');
+
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    const ctxHint = lastUserMsg
+      ? `\n\nUser's original query context: "${(lastUserMsg.rawText || lastUserMsg.content).slice(0, 200)}"`
+      : '';
+
+    const summaryPrompt =
+      `Summarize the following document. Output exactly this format:\n\n**Document Summary:**\n\n**Key Points:**\n- point 1\n- point 2\n- point 3\n\n**Key Insights:**\n[2-3 sentences of high-signal takeaways and trends]\n\nBe concise. No fluff.${ctxHint}\n\n---\nDOCUMENT:\n${content.slice(0, 5500)}`;
+
+    try {
+      const fullContent = await streamAzureResponse(
+        [
+          { role: 'system', content: 'You are a precise document summarizer. Output only the requested format.' },
+          { role: 'user', content: summaryPrompt },
+        ],
+        partial => setStreamingContent(partial)
+      );
+      setStreamingContent('');
+
+      let msgId: string | undefined;
+      if (activeChatId) {
+        const { data: inserted } = await supabase
+          .from('messages')
+          .insert({ chat_id: activeChatId, role: 'assistant', content: fullContent })
+          .select().single();
+        msgId = inserted?.id;
+      }
+      msgId = msgId ?? `summary-${Date.now()}`;
+      setSummaryMeta(prev => new Map(prev).set(msgId!, content));
+      setMessages(prev => [...prev, { id: msgId, role: 'assistant', content: fullContent }]);
+    } catch (e: any) {
+      toast.error(`Summary failed: ${e.message}`);
+    } finally {
+      setIsTyping(false);
+      setStreamingContent('');
+    }
   };
 
   const handleRegenerateResponse = async () => {
@@ -1037,6 +1117,11 @@ export default function App() {
                             <Bot size={13} className="text-primary" />
                           </div>
                           <div className="flex flex-col min-w-0 flex-1 max-w-[82%]">
+                            {summaryMeta.has(msg.id ?? '') && (
+                              <div className="flex items-center gap-1.5 mb-1.5 pl-1">
+                                <span className="text-[9px] font-bold text-primary/70 uppercase tracking-widest px-2 py-0.5 bg-primary/10 border border-primary/20 rounded-full">Document Summary</span>
+                              </div>
+                            )}
                             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
                               className="bg-card border border-primary/10 rounded-2xl rounded-tl-sm px-4 py-3">
                               <div className="prose-cockroach">
@@ -1054,14 +1139,14 @@ export default function App() {
                                 </motion.div>
                               )}
                             </motion.div>
-                            {/* Action bar — state-based hover (reliable on last message) */}
+                            {/* Action bar — state-based hover */}
                             <div className={cn("flex items-center gap-0.5 mt-1.5 pl-1 transition-opacity duration-150",
                               hoveredMsgKey === (msg.id || String(i)) ? "opacity-100" : "opacity-0 pointer-events-none")}>
                               {([
                                 { icon: Copy, title: 'Copy', onClick: () => { navigator.clipboard.writeText(msg.content); toast.success('Copied'); } },
                                 { icon: ThumbsUp, title: 'Good', onClick: () => setMessageRatings(r => ({ ...r, [msg.id || String(i)]: 'up' })), active: messageRatings[msg.id || String(i)] === 'up' },
                                 { icon: ThumbsDown, title: 'Bad', onClick: () => setMessageRatings(r => ({ ...r, [msg.id || String(i)]: 'down' })), active: messageRatings[msg.id || String(i)] === 'down' },
-                                { icon: FileDown, title: 'Open as document', onClick: () => setDocumentViewerContent(msg.content) },
+                                { icon: FileDown, title: 'Open as document', onClick: () => handleOpenAsDocument(msg.content) },
                                 { icon: RefreshCw, title: 'Regenerate', onClick: () => i === messages.length - 1 && handleRegenerateResponse() },
                               ] as { icon: any; title: string; onClick: () => void; active?: boolean }[]).map(({ icon: Icon, title, onClick, active }) => (
                                 <button key={title} onClick={onClick} title={title}
@@ -1070,6 +1155,22 @@ export default function App() {
                                 </button>
                               ))}
                             </div>
+                            {/* Summary action buttons */}
+                            {summaryMeta.has(msg.id ?? '') && (
+                              <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                                className="flex items-center gap-2 mt-2 pl-1 flex-wrap">
+                                <button
+                                  onClick={() => setDocumentViewerContent(summaryMeta.get(msg.id ?? '') ?? '')}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 border border-primary/25 hover:bg-primary/20 text-primary rounded-xl text-[11px] font-bold tracking-wide transition-all active:scale-[0.97]">
+                                  <FileText size={11} /> View Full Report
+                                </button>
+                                <button
+                                  onClick={() => { setInput('Can you elaborate on the key insights from this document?'); }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-mid border border-border hover:border-primary/30 text-muted-foreground hover:text-foreground rounded-xl text-[11px] font-bold tracking-wide transition-all active:scale-[0.97]">
+                                  <ChevronRight size={11} /> Ask Follow-up
+                                </button>
+                              </motion.div>
+                            )}
                           </div>
                         </div>
                       ) : (
@@ -1147,10 +1248,55 @@ export default function App() {
              )}
              <div className="max-w-3xl mx-auto relative group z-50">
                 <div className="bg-card/90 backdrop-blur-2xl border border-white/10 rounded-[28px] shadow-[0_12px_40px_-12px_rgba(0,0,0,0.5)] focus-within:border-primary/50 transition-all focus-within:shadow-[0_12px_40px_-12px_rgba(255,255,255,0.1)] focus-within:ring-1 focus-within:ring-primary/30">
-                  <textarea 
+                  {/* URL preview cards */}
+                  {urlPreviews.size > 0 && (
+                    <div className="px-4 pt-3 pb-1 space-y-1.5">
+                      <AnimatePresence>
+                        {[...urlPreviews.entries()].map(([url, preview]) => (
+                          <motion.div
+                            key={url}
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="flex items-center gap-2.5 bg-surface-mid/70 border border-border/50 rounded-xl px-3 py-2 overflow-hidden"
+                          >
+                            <Globe
+                              size={12}
+                              className={cn(
+                                'shrink-0 transition-colors',
+                                preview.status === 'fetching' && 'text-primary animate-pulse',
+                                preview.status === 'ready' && 'text-green-500',
+                                preview.status === 'error' && 'text-destructive'
+                              )}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px] font-medium text-foreground truncate leading-tight">
+                                {preview.status === 'fetching'
+                                  ? 'Fetching content…'
+                                  : preview.status === 'ready'
+                                  ? preview.data!.title
+                                  : `Failed: ${preview.error}`}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground/70 truncate font-mono">{getUrlDomain(url)}</p>
+                            </div>
+                            {preview.status === 'ready' && (
+                              <span className="text-[9px] font-bold text-green-500 uppercase tracking-widest shrink-0">Extracted</span>
+                            )}
+                            <button
+                              onClick={() => removeUrlPreview(url)}
+                              className="p-0.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors shrink-0"
+                            >
+                              <X size={11} />
+                            </button>
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  )}
+                  <textarea
                     placeholder="Brief CockRoach..."
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={handleInputChange}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -1205,8 +1351,8 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-3">
                        <span className="text-[11px] font-mono font-medium text-muted-foreground px-2">Return ↵</span>
-                       <button 
-                         onClick={handleSendMessage}
+                       <button
+                         onClick={() => handleSendMessage()}
                          disabled={!input.trim() || isTyping}
                          className="bg-primary disabled:opacity-50 hover:brightness-[1.15] text-background p-2 rounded-xl transition-all active:scale-90 shadow-[0_0_15px_rgba(var(--primary),0.4)] disabled:shadow-none"
                        >

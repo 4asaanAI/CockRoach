@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Layaa OS Dark Palette - Restored by Request */
+  --color-background: #1A1A1A;
+  --color-card: #242424;
+  --color-surface-mid: #1F1F1F;
+  --color-sidebar: #181818;
+  --color-border: #2D2D2D;
+  --color-foreground: #E5E5E5;
+  --color-muted-foreground: #737373;
+  
+  /* Brand Accents (Restored) */
+  --color-primary: #E87A2E; /* Layaa Orange */
+  --color-primary-bg: rgba(232, 122, 46, 0.08);
+  --color-primary-border: rgba(232, 122, 46, 0.22);
+  --color-accent: #2B5797; /* Layaa Blue */
+  --color-accent-soft: #5B82C7;
+  
+  /* Status */
+  --color-success: #2D5A27;
+  --color-warning: #5A4A27;
+  --color-destructive: #5A2727;
+
+  --radius-xl: 12px;
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+}
+
+@layer base {
+  :root {
+    --letter-spacing-tight: -0.015em;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    letter-spacing: var(--letter-spacing-tight);
+    color-scheme: dark;
+  }
+}
+
+/* Transitions as per Design System */
+* {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+  transition-timing-function: ease-out;
+  transition-duration: 200ms;
+}
+
+/* Custom Utilities for Layaa OS */
+@layer components {
+  .layaa-card {
+    @apply bg-card border border-border rounded-xl;
+  }
+  
+  .layaa-card-interactive {
+    @apply hover:border-primary-border hover:shadow-sm;
+  }
+
+  .layaa-btn-primary {
+    @apply bg-primary text-white font-semibold rounded-lg px-4 py-2 hover:brightness-110 active:scale-[0.98];
+  }
+
+  .layaa-nav-item {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-card/60 hover:text-foreground;
+  }
+
+  .layaa-nav-item-active {
+    @apply bg-primary-bg text-primary border border-primary-border;
+  }
+}
+
+/* Scrollbar styling - Slim & Muted */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full hover:bg-muted-foreground/50;
+}

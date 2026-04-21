@@ -55,3 +55,57 @@ alter table public.messages disable row level security;
 
 -- RLS IS DISABLED ON THESE TABLES SO NO AUTHORIZATION OR AUTHENTICATION IS REQUIRED TO READ/WRITE.
 -- This fulfills the explicit user request to remove every type of auth completely.
+
+-- ============================================================
+-- V2: System Prompts & Memory Items
+-- ============================================================
+
+drop table if exists public.memory_items cascade;
+drop table if exists public.system_prompts cascade;
+
+create table public.system_prompts (
+  user_id text references public.users(id) on delete cascade not null primary key,
+  prompt text not null,
+  kb_01_enabled boolean default true not null,
+  kb_02_enabled boolean default true not null,
+  kb_03_enabled boolean default true not null,
+  kb_04_enabled boolean default true not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table public.memory_items (
+  id uuid default gen_random_uuid() primary key,
+  user_id text references public.users(id) on delete cascade not null,
+  content text not null,
+  category text default 'general' not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+grant all on table public.system_prompts to anon, authenticated;
+grant all on table public.memory_items to anon, authenticated;
+
+alter table public.system_prompts disable row level security;
+alter table public.memory_items disable row level security;
+
+-- Add share_token to chats (run separately if chats table already exists)
+alter table public.chats add column if not exists share_token text unique;
+
+-- V3: User Personalization
+drop table if exists public.user_personalization cascade;
+create table public.user_personalization (
+  user_id text references public.users(id) on delete cascade not null primary key,
+  tone text default 'Professional',
+  warm text default 'Default',
+  enthusiastic text default 'Default',
+  headers_lists text default 'Default',
+  emoji text default 'Default',
+  custom_instructions text default '',
+  nickname text default '',
+  occupation text default '',
+  location text default '',
+  interests text default '',
+  communication_style text default 'Direct',
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+grant all on table public.user_personalization to anon, authenticated;
+alter table public.user_personalization disable row level security;

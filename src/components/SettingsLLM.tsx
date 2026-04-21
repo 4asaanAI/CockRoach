@@ -3,26 +3,68 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAppStore } from '../store';
 import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
-import { 
-  Key, 
-  Cpu, 
-  Globe, 
-  ShieldCheck, 
-  Save, 
+import {
+  Key,
+  Cpu,
+  Globe,
+  ShieldCheck,
+  Save,
   Activity,
   User,
-  Camera,
   Mail,
   Lock,
   ChevronDown,
   Cloud,
   AlertCircle,
-  Upload
+  Upload,
+  Brain,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import SettingsAgentBrain from './SettingsAgentBrain';
 
-export default function SettingsLLM() {
+const SETTINGS_TABS = [
+  { id: 'identity', label: 'Identity' },
+  { id: 'llm', label: 'LLM Config' },
+  { id: 'brain', label: 'Agent Brain', icon: Brain },
+];
+
+export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { prompt: number; completion: number } }) {
+  const [activeTab, setActiveTab] = React.useState<'identity' | 'llm' | 'brain'>('identity');
   const { azureConfig, setAzureConfig, currentUser, updateCurrentUser } = useAppStore();
+  const [connectionStatus, setConnectionStatus] = React.useState<'unknown' | 'ok' | 'error'>('unknown');
+  const [personalization, setPersonalization] = React.useState({
+    tone: 'Professional', warm: 'Default', enthusiastic: 'Default',
+    headers_lists: 'Default', emoji: 'Default',
+    custom_instructions: '', nickname: '', occupation: '', location: '',
+    interests: '', communication_style: 'Direct',
+  });
+  const [personalLoaded, setPersonalLoaded] = React.useState(false);
+
+  // Load personalization from Supabase on mount
+  React.useEffect(() => {
+    if (!currentUser || personalLoaded) return;
+    supabase.from('user_personalization').select('*').eq('user_id', currentUser.id).single()
+      .then(({ data }) => {
+        if (data) setPersonalization(p => ({ ...p, ...data }));
+        setPersonalLoaded(true);
+      });
+  }, [currentUser?.id]);
+
+  const handlePersonalizationSave = async () => {
+    if (!currentUser) return;
+    const { error } = await supabase.from('user_personalization').upsert({
+      user_id: currentUser.id, ...personalization, updated_at: new Date().toISOString()
+    });
+    if (error) toast.error(`Personalization save failed: ${error.message}`);
+    else toast.success('Personalization saved');
+  };
+
+  // Cost in USD (GPT-4o tier approx pricing)
+  const INPUT_COST_PER_1M = 5.0;
+  const OUTPUT_COST_PER_1M = 15.0;
+  const sessionCost = sessionTokens
+    ? ((sessionTokens.prompt / 1_000_000) * INPUT_COST_PER_1M + (sessionTokens.completion / 1_000_000) * OUTPUT_COST_PER_1M)
+    : 0;
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [activeProvider, setActiveProvider] = React.useState<string | null>('azure');
   const [profileData, setProfileData] = React.useState({
@@ -83,38 +125,10 @@ export default function SettingsLLM() {
   };
 
   const PROVIDERS = [
-    { 
-      id: 'azure', 
-      name: 'Azure AI Foundry', 
-      icon: Cloud, 
-      status: 'inactive',
-      description: 'Enterprise-grade neural orchestration for mission-critical tasks.',
-      knowledge: ['gpt-5.1-chat', 'Azure OpenAI GPT-4o', 'Llama-3-70B (Foundry)']
-    },
-    { 
-      id: 'google', 
-      name: 'Google Gemini', 
-      icon: Globe, 
-      status: 'active',
-      description: 'Multimodal mastery with 1M+ context. Default co-founder engine.',
-      knowledge: ['Gemini 2.0 Flash', 'Gemini 1.5 Pro', 'Deep Research']
-    },
-    { 
-      id: 'openai', 
-      name: 'OpenAI', 
-      icon: Cpu, 
-      status: 'inactive',
-      description: 'The industry standard for reasoning and tool-use precision.',
-      knowledge: ['GPT-4o', 'o1 series', 'GPT-4 Turbo']
-    },
-    { 
-      id: 'anthropic', 
-      name: 'Anthropic', 
-      icon: ShieldCheck, 
-      status: 'inactive',
-      description: 'Nuanced writing, complex reasoning, and massive context windows.',
-      knowledge: ['Claude 3.5 Sonnet', 'Claude 3 Opus']
-    },
+    { id: 'azure', name: 'Azure AI Foundry', icon: Cloud, status: connectionStatus === 'ok' ? 'active' : connectionStatus === 'error' ? 'error' : 'active', description: 'Enterprise-grade neural orchestration — active provider.', knowledge: [azureConfig.model || 'gpt-4o', 'Azure OpenAI GPT-4', 'Llama-3-70B (Foundry)'] },
+    { id: 'google', name: 'Google Gemini', icon: Globe, status: 'inactive', description: 'Multimodal mastery with 1M+ context.', knowledge: ['Gemini 2.0 Flash', 'Gemini 1.5 Pro'] },
+    { id: 'openai', name: 'OpenAI', icon: Cpu, status: 'inactive', description: 'Industry standard for reasoning and tool-use.', knowledge: ['GPT-4o', 'o1 series'] },
+    { id: 'anthropic', name: 'Anthropic', icon: ShieldCheck, status: 'inactive', description: 'Nuanced writing and massive context windows.', knowledge: ['Claude 3.5 Sonnet', 'Claude 3 Opus'] },
   ];
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,10 +143,34 @@ export default function SettingsLLM() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-10 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      
+    <div className="max-w-4xl mx-auto space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+      {/* Tab Navigation */}
+      <div className="flex items-center gap-1 border-b border-border">
+        {SETTINGS_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2.5 text-[11px] font-bold uppercase tracking-widest transition-all border-b-2 -mb-px',
+              activeTab === tab.id
+                ? 'text-primary border-primary'
+                : 'text-muted-foreground border-transparent hover:text-foreground'
+            )}
+          >
+            {tab.icon && <tab.icon size={12} />}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'brain' && <SettingsAgentBrain />}
+
+      {activeTab !== 'brain' && (
+      <div className="space-y-10">
+
       {/* Identity Configuration */}
-      <div className="space-y-6">
+      {activeTab === 'identity' && <div className="space-y-6">
         <div className="space-y-1.5">
           <h2 className="text-2xl font-bold text-foreground tracking-tight">Identity Configuration</h2>
           <p className="text-muted-foreground text-[13px] leading-relaxed max-w-2xl">
@@ -217,8 +255,91 @@ export default function SettingsLLM() {
             </button>
           </div>
         </div>
-      </div>
+      </div>}
 
+      {/* ── Personalization (only in Identity tab) ── */}
+      {activeTab === 'identity' && <div className="layaa-card bg-card/50 backdrop-blur-sm shadow-xl ring-1 ring-primary/5 p-8 space-y-8">
+        <div>
+          <h3 className="text-lg font-bold text-foreground">Personalization</h3>
+          <div className="h-px bg-border mt-3 mb-6" />
+        </div>
+
+        {/* Response Style */}
+        <div className="space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[13px] font-semibold text-foreground">Base style and tone</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Sets how CockRoach responds to you. Doesn't impact capabilities.</p>
+            </div>
+            <select value={personalization.tone} onChange={e => setPersonalization(p => ({ ...p, tone: e.target.value }))}
+              className="bg-background border border-border rounded-lg px-3 py-1.5 text-[12px] text-foreground focus:outline-none focus:border-primary/50 min-w-[140px]">
+              {['Professional', 'Direct', 'Casual', 'Socratic', 'Mentoring', 'Blunt / No-fluff'].map(t => <option key={t}>{t}</option>)}
+            </select>
+          </div>
+
+          <div className="h-px bg-border/60" />
+          <p className="text-[13px] font-semibold text-foreground">Characteristics</p>
+          <p className="text-[11px] text-muted-foreground -mt-3">Additional customizations layered on top of your base tone.</p>
+
+          {[
+            { label: 'Warmth', key: 'warm', options: ['Default', 'Low', 'High'] },
+            { label: 'Enthusiasm', key: 'enthusiastic', options: ['Default', 'Low', 'High'] },
+            { label: 'Headers & Lists', key: 'headers_lists', options: ['Default', 'Always', 'Never'] },
+            { label: 'Emoji', key: 'emoji', options: ['Default', 'Never', 'Occasional', 'Liberal'] },
+            { label: 'Communication Style', key: 'communication_style', options: ['Direct', 'Narrative', 'Bullet-first', 'Socratic'] },
+          ].map(({ label, key, options }) => (
+            <div key={key} className="flex items-center justify-between">
+              <p className="text-[13px] text-foreground">{label}</p>
+              <select value={(personalization as any)[key]} onChange={e => setPersonalization(p => ({ ...p, [key]: e.target.value }))}
+                className="bg-background border border-border rounded-lg px-3 py-1.5 text-[12px] text-foreground focus:outline-none focus:border-primary/50 min-w-[140px]">
+                {options.map(o => <option key={o}>{o}</option>)}
+              </select>
+            </div>
+          ))}
+
+          <div className="h-px bg-border/60" />
+          <div>
+            <p className="text-[13px] font-semibold text-foreground mb-1.5">Custom instructions</p>
+            <textarea
+              value={personalization.custom_instructions}
+              onChange={e => setPersonalization(p => ({ ...p, custom_instructions: e.target.value }))}
+              placeholder="e.g. Always be concise. Use startup terminology. Reference real companies when possible."
+              rows={3}
+              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50 resize-none transition-all"
+            />
+          </div>
+        </div>
+
+        {/* About You */}
+        <div className="space-y-5">
+          <div className="h-px bg-border" />
+          <p className="text-[15px] font-bold text-foreground">About You</p>
+          <div className="h-px bg-border/60" />
+
+          {[
+            { label: 'Nickname', key: 'nickname', placeholder: 'What should CockRoach call you?' },
+            { label: 'Occupation', key: 'occupation', placeholder: 'Founder, Investor, Engineer...' },
+            { label: 'Location (City, State)', key: 'location', placeholder: 'e.g. San Francisco, CA' },
+            { label: 'Interests / Domains', key: 'interests', placeholder: 'e.g. SaaS, AI, HealthTech, Defense...' },
+          ].map(({ label, key, placeholder }) => (
+            <div key={key}>
+              <p className="text-[13px] font-semibold text-foreground mb-1.5">{label}</p>
+              <input type="text" value={(personalization as any)[key]} placeholder={placeholder}
+                onChange={e => setPersonalization(p => ({ ...p, [key]: e.target.value }))}
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50 transition-all" />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <button onClick={handlePersonalizationSave}
+            className="px-8 py-2.5 bg-primary hover:brightness-110 text-white text-[11px] font-bold rounded-lg transition-all shadow-lg shadow-primary/20 uppercase tracking-widest flex items-center gap-2 active:scale-95">
+            <Save size={14} /><span>Save Personalization</span>
+          </button>
+        </div>
+      </div>}
+
+      {activeTab === 'llm' && <div className="space-y-6">
       <div className="space-y-1.5">
         <h2 className="text-2xl font-bold text-foreground tracking-tight">Neural Intelligence Suite</h2>
         <p className="text-muted-foreground text-[13px] leading-relaxed max-w-2xl">
@@ -283,19 +404,24 @@ export default function SettingsLLM() {
                   onClick={async () => {
                     if (activeProvider === 'azure') {
                       try {
+                        toast.loading('Testing connection...', { id: 'conn-test' });
                         const baseUrl = azureConfig.endpoint.endsWith('/') ? azureConfig.endpoint.slice(0, -1) : azureConfig.endpoint;
                         const url = `${baseUrl}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.version}`;
                         const res = await fetch(url.replace(/([^:]\/)\/+/g, "$1"), {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', 'api-key': azureConfig.apiKey },
-                          body: JSON.stringify({ messages: [{ role: 'user', content: 'Ping' }], max_tokens: 5 })
+                          body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }], max_tokens: 5, stream: false })
                         });
                         const data = await res.json();
                         if (!res.ok) throw new Error(data.error?.message || 'Connection failed');
-                        alert('Connection Successful!');
+                        setConnectionStatus('ok');
+                        toast.success('Azure connection verified ✓', { id: 'conn-test' });
                       } catch (e: any) {
-                        alert(`Connection Error: ${e.message}`);
+                        setConnectionStatus('error');
+                        toast.error(`Connection failed: ${e.message}`, { id: 'conn-test' });
                       }
+                    } else {
+                      toast.info(`${activeProvider} integration not yet configured.`);
                     }
                   }}
                   className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-full text-[10px] font-bold text-muted-foreground hover:text-foreground transition-all hover:border-primary-border shadow-sm">
@@ -406,38 +532,44 @@ export default function SettingsLLM() {
         )}
       </AnimatePresence>
 
-      {/* Resource Utilization - High-end Minimal Data Visualization */}
-      <div className="layaa-card p-8 space-y-8 bg-card backdrop-blur-sm">
+      {/* Resource Utilization — real session token tracking */}
+      <div className="layaa-card p-8 space-y-6 bg-card backdrop-blur-sm">
         <div className="flex items-center justify-between">
-           <div className="space-y-1">
-             <h3 className="text-lg font-bold text-foreground tracking-tight">Neural Resource Index</h3>
-             <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Real-time Token Consumption & Projected Cost</p>
-           </div>
-           <div className="text-right">
-             <span className="text-3xl font-bold text-foreground font-mono tracking-tighter">₹1,024.00</span>
-             <p className="text-[10px] text-primary font-bold uppercase tracking-[0.2em] mt-1 italic">EST. MONTHLY RUNRATE</p>
-           </div>
-        </div>
-        
-        <div className="h-44 w-full bg-background/50 border border-border rounded-xl flex items-center justify-center relative overflow-hidden group cursor-crosshair">
-           <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-           <Activity size={32} className="text-muted-foreground/30 animate-pulse" />
-           <span className="text-[11px] text-muted-foreground font-mono ml-4 uppercase tracking-[0.2em] font-medium">Aggregating cluster data...</span>
+          <div className="space-y-1">
+            <h3 className="text-lg font-bold text-foreground tracking-tight">Session Token Usage</h3>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">Live Token Consumption & Estimated Cost (USD)</p>
+          </div>
+          <div className="text-right">
+            <span className="text-3xl font-bold text-foreground font-mono tracking-tighter">
+              ${sessionCost.toFixed(4)}
+            </span>
+            <p className="text-[10px] text-primary font-bold uppercase tracking-[0.2em] mt-1 italic">Session Cost (USD)</p>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-           {[
-             { label: 'Uptime', value: '99.98%', color: 'success' },
-             { label: 'Latency', value: '142ms', color: 'primary' },
-             { label: 'Neural Load', value: '14%', color: 'accent' }
-           ].map((stat) => (
-             <div key={stat.label} className="bg-background border border-border p-4 rounded-xl shadow-xs">
-                <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest block mb-1">{stat.label}</span>
-                <span className={`text-lg font-bold font-mono text-${stat.color}`}>{stat.value}</span>
-             </div>
-           ))}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[
+            { label: 'Input Tokens', value: (sessionTokens?.prompt || 0).toLocaleString(), sub: `$${(((sessionTokens?.prompt || 0) / 1_000_000) * INPUT_COST_PER_1M).toFixed(4)}` },
+            { label: 'Output Tokens', value: (sessionTokens?.completion || 0).toLocaleString(), sub: `$${(((sessionTokens?.completion || 0) / 1_000_000) * OUTPUT_COST_PER_1M).toFixed(4)}` },
+            { label: 'Total Tokens', value: ((sessionTokens?.prompt || 0) + (sessionTokens?.completion || 0)).toLocaleString(), sub: `$${INPUT_COST_PER_1M}/1M in · $${OUTPUT_COST_PER_1M}/1M out` },
+          ].map(stat => (
+            <div key={stat.label} className="bg-background border border-border p-4 rounded-xl">
+              <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest block mb-1">{stat.label}</span>
+              <span className="text-xl font-bold font-mono text-foreground">{stat.value}</span>
+              <span className="text-[10px] text-muted-foreground/60 font-mono block mt-0.5">{stat.sub}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-4 bg-background/60 border border-border/50 rounded-xl">
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            Pricing estimate based on Azure OpenAI GPT-4o rates: <span className="text-foreground font-mono">$5.00/1M input</span> · <span className="text-foreground font-mono">$15.00/1M output</span>. Actual Azure billing may vary by deployment tier. Token counts reset when you refresh the page.
+          </p>
         </div>
       </div>
+      </div>}
+
+      </div>)}
     </div>
   );
 }

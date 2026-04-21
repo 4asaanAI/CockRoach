@@ -253,13 +253,26 @@ export default function SettingsLLM() {
                 </div>
 
                 <div className="space-y-6">
+                  {activeProvider === 'azure' && (
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em] px-1">Deployment Name</label>
+                       <input 
+                         type="text" 
+                         placeholder="Azure Deployment ID"
+                         value={azureConfig.deployment}
+                         onChange={(e) => setAzureConfig({ ...azureConfig, deployment: e.target.value })}
+                         className="w-full bg-background border border-border rounded-xl py-3 px-4 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all font-mono shadow-inner"
+                       />
+                    </div>
+                  )}
+
                   <div className="p-5 bg-background border border-border rounded-2xl shadow-inner space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-primary uppercase tracking-[0.2em]">Full Endpoint Usage</span>
+                      <span className="text-[10px] font-bold text-primary uppercase tracking-[0.2em]">Azure Infrastructure</span>
                     </div>
                     <div className="space-y-2 text-[11px] text-muted-foreground leading-relaxed">
                        Your configured endpoint provides direct responses over Azure infrastructure. <br/><br/>
-                       Model and deployment ID resolution is handled automatically based on the provided URL mapping parameters.
+                       Model mapping is handled via your explicit deployment ID configuration.
                     </div>
                   </div>
 

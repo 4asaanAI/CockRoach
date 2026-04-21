@@ -14,6 +14,8 @@ type AppState = {
   azureConfig: {
     apiKey: string;
     endpoint: string;
+    deployment: string;
+    model: string;
     version: string;
   };
   setAzureConfig: (config: any) => void;
@@ -37,8 +39,10 @@ export const useAppStore = create<AppState>((set) => ({
   profiles: INITIAL_PROFILES,
   azureConfig: {
     apiKey: 'DKUDyLkncgn1VtOAfJAA9wQdRAOrbQCD2bjLnme8dTlfElC5n1mLJQQJ99CDACYeBjFXJ3w3AAAAACOGNEId',
-    endpoint: 'https://layaaos.cognitiveservices.azure.com/openai/responses?api-version=2025-04-01-preview',
-    version: '2025-04-01-preview'
+    endpoint: 'https://layaaos.cognitiveservices.azure.com/',
+    deployment: 'CockRoach_2.0',
+    model: 'gpt-5.1-chat',
+    version: '2024-12-01-preview'
   },
   setAzureConfig: (config) => set((state) => ({ azureConfig: { ...state.azureConfig, ...config } })),
   setCurrentUser: (user) => set({ currentUser: user }),

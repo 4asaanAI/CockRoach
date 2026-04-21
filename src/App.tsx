@@ -50,7 +50,8 @@ export default function App() {
     setIsTyping(true);
 
     try {
-      const url = azureConfig.endpoint.includes('?') ? azureConfig.endpoint : `${azureConfig.endpoint}/openai/responses?api-version=${azureConfig.version}`;
+      const baseUrl = azureConfig.endpoint.endsWith('/') ? azureConfig.endpoint.slice(0, -1) : azureConfig.endpoint;
+      const url = `${baseUrl}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.version}`;
       
       const response = await fetch(url.replace(/([^:]\/)\/+/g, "$1"), {
         method: 'POST',

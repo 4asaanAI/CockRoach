@@ -42,8 +42,8 @@ function rateLimitExceeded(ip) {
 }
 
 const MAX_MESSAGES = 100;
-const MAX_CHARS_PER_MESSAGE = 50_000;
-const MAX_TOTAL_CHARS = 200_000;
+const MAX_CHARS_PER_MESSAGE = 300_000;
+const MAX_TOTAL_CHARS = 600_000;
 
 // Ceiling on completion tokens. Prevents a runaway prompt from generating
 // unbounded output (→ unbounded Azure bill). Chat interactions rarely need

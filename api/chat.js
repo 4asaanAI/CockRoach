@@ -111,7 +111,7 @@ export default async function handler(req, res) {
         model: AZURE_OPENAI_DEPLOYMENT || AZURE_OPENAI_MODEL,
         messages: body.messages,
         temperature: typeof body.temperature === 'number' ? body.temperature : 0.7,
-        max_tokens: Math.min(
+        max_completion_tokens: Math.min(
           typeof body.max_tokens === 'number' && body.max_tokens > 0 ? body.max_tokens : MAX_COMPLETION_TOKENS,
           MAX_COMPLETION_TOKENS,
         ),

@@ -72,7 +72,7 @@ const MD_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = 
   p: ({children}) => <p className="text-[14px] text-foreground leading-7 mb-3 last:mb-0">{children}</p>,
   ul: ({children}) => <ul className="my-2 space-y-1 list-none pl-0">{children}</ul>,
   ol: ({children}) => <ol className="my-2 space-y-1 list-decimal pl-5">{children}</ol>,
-  li: ({children}) => <li className="text-[14px] text-foreground leading-6 flex gap-2 items-start"><span className="text-primary mt-1.5 shrink-0">›</span><span>{children}</span></li>,
+  li: ({children}) => <li className="text-[14px] text-foreground leading-6 flex gap-2 items-start"><span className="text-primary mt-[3px] shrink-0 leading-none">›</span><span>{children}</span></li>,
   strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
   em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
   blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-4 my-3 text-muted-foreground italic">{children}</blockquote>,
@@ -128,13 +128,13 @@ export default function App() {
   const [showAnalysisButton, setShowAnalysisButton] = React.useState(false);
   const [documentViewerContent, setDocumentViewerContent] = React.useState<string | null>(null);
   const [messageRatings, setMessageRatings] = React.useState<Record<string, 'up' | 'down'>>({});
-  const [hoveredMsgKey, setHoveredMsgKey] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchFocused, setSearchFocused] = React.useState(false);
   const [searchResults, setSearchResults] = React.useState<{ chats: any[]; messages: any[] }>({ chats: [], messages: [] });
   const [sharedChatBanner, setSharedChatBanner] = React.useState<string | null>(null);
   const [quickMemory, setQuickMemory] = React.useState('');
   const [urlPreviews, setUrlPreviews] = React.useState<Map<string, UrlPreview>>(new Map());
+  const [pendingFile, setPendingFile] = React.useState<{ name: string; size: number; content: string } | null>(null);
   // msgId → original document content (for "View Full Report" action on summary msgs)
   const [summaryMeta, setSummaryMeta] = React.useState<Map<string, string>>(new Map());
   const searchRef = React.useRef<HTMLInputElement>(null);
@@ -306,94 +306,92 @@ export default function App() {
     }
   }, [messages, isTyping]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !currentUser) return;
+    if (!file) return;
     if (fileInputRef.current) fileInputRef.current.value = '';
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const text = event.target?.result;
-      const fileContentStr = typeof text === 'string' ? text : '[Binary file — cannot extract text]';
-      let currentChatId = activeChatId;
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
-      try {
-        if (!currentChatId) {
-          const { data: chatData, error: chatErr } = await supabase.from('chats').insert({
-            user_id: currentUser.id,
-            title: `File: ${file.name}`.substring(0, 45),
-          }).select().single();
-          if (chatErr) throw chatErr;
-          currentChatId = chatData.id;
-          setActiveChatId(currentChatId);
-          await loadChatHistory(currentUser.id);
-        } else {
-          await supabase.from('chats').update({ updated_at: new Date().toISOString() }).eq('id', currentChatId);
-          await loadChatHistory(currentUser.id);
+    if (isPdf) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const buffer = event.target?.result;
+        if (!(buffer instanceof ArrayBuffer)) {
+          setPendingFile({ name: file.name, size: file.size, content: '[PDF — could not read file]' });
+          return;
+        }
+        // Decode as latin-1 to safely get raw bytes as a string
+        const raw = new TextDecoder('latin-1').decode(buffer);
+
+        // Extract text from PDF BT...ET blocks (text object operator pairs)
+        const textParts: string[] = [];
+        const btEtRe = /BT[\s\S]*?ET/g;
+        let block: RegExpExecArray | null;
+        while ((block = btEtRe.exec(raw)) !== null && textParts.join('').length < 12000) {
+          const tjRe = /\(([^)\\]*(?:\\.[^)\\]*)*)\)\s*(?:Tj|'|")|<([0-9a-fA-F]+)>\s*Tj|\[([\s\S]*?)\]\s*TJ/g;
+          let m: RegExpExecArray | null;
+          while ((m = tjRe.exec(block[0])) !== null) {
+            if (m[1] !== undefined) {
+              textParts.push(m[1].replace(/\\n/g, '\n').replace(/\\r/g, ' ').replace(/\\\\/g, '\\').replace(/\\(.)/g, '$1'));
+            } else if (m[2] !== undefined) {
+              // hex string — skip (usually font-encoded, unreadable without font map)
+            } else if (m[3] !== undefined) {
+              const inner = m[3].replace(/\(([^)\\]*(?:\\.[^)\\]*)*)\)/g, (_, s) =>
+                s.replace(/\\n/g, '\n').replace(/\\\\/g, '\\').replace(/\\(.)/g, '$1')
+              );
+              textParts.push(inner.replace(/<[^>]*>/g, '').replace(/\[\s*\]/g, ''));
+            }
+          }
+          textParts.push(' ');
         }
 
-        const displayContent = `📄 **${file.name}** (${(file.size / 1024).toFixed(1)} KB)`;
-        const rawText = `[File: ${file.name}]\n\n${fileContentStr.substring(0, 8000)}`;
+        const extracted = textParts.join('').replace(/\s{3,}/g, '\n\n').replace(/[^\x09\x0A\x0D\x20-\x7E -￼]/g, '').trim();
+        const content = extracted.length > 80
+          ? extracted.substring(0, 8000)
+          : '[PDF text could not be extracted — try copying and pasting the content directly]';
 
-        const { data: userMsg } = await supabase.from('messages').insert({
-          chat_id: currentChatId,
-          role: 'user',
-          content: displayContent,
-          raw_text: rawText,
-        }).select().single();
-
-        setMessages(prev => [...prev, {
-          id: userMsg?.id,
-          role: 'user',
-          content: displayContent,
-          rawText,
-        }]);
-
-        // Real LLM analysis of the file
-        setIsTyping(true);
-        setStreamingContent('');
-        const builtPrompt = buildSystemPrompt({
-          systemPromptBase: systemPrompt || COCKROACH_DEFAULT_SYSTEM_PROMPT,
-          kbToggles, memoryItems, activeMode,
-          userName: currentUser.name, isBrutalHonesty,
-        });
-
-        const apiMessages = [
-          { role: 'system', content: builtPrompt },
-          ...messages.map(m => ({ role: m.role, content: m.rawText || m.content })),
-          { role: 'user', content: rawText },
-        ];
-
-        setIsTyping(false);
-        const fullContent = await streamAzureResponse(apiMessages, (partial) => {
-          setStreamingContent(partial);
-        });
-        setStreamingContent('');
-
-        const { data: assistMsg } = await supabase.from('messages').insert({
-          chat_id: currentChatId!,
-          role: 'assistant',
-          content: fullContent,
-        }).select().single();
-
-        setMessages(prev => [...prev, { id: assistMsg?.id, role: 'assistant', content: fullContent }]);
-
-      } catch (err: any) {
-        setIsTyping(false);
-        setStreamingContent('');
-        toast.error(`File analysis failed: ${err.message}`);
-      }
-    };
-
-    reader.readAsText(file);
+        setPendingFile({ name: file.name, size: file.size, content });
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result;
+        const raw = typeof text === 'string' ? text : '[Binary file — cannot extract text]';
+        // Strip null bytes, lone surrogates, and non-printable control chars to prevent Supabase JSON errors
+        const content = raw
+          .replace(/\0/g, '')
+          .replace(/[\uD800-\uDFFF]/g, '')
+          .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+          .substring(0, 8000);
+        setPendingFile({ name: file.name, size: file.size, content });
+      };
+      reader.readAsText(file);
+    }
   };
 
   const handleSendMessage = async (overrideText?: string) => {
-    const rawText = overrideText ?? input.trim();
-    if (!rawText || isTyping || streamingContent || !currentUser) return;
+    const textInput = overrideText ?? input.trim();
+    if (!textInput && !pendingFile) return;
+    if (isTyping || streamingContent || !currentUser) return;
 
-    const userMsg = rawText;
-    if (!overrideText) setInput('');
+    // Build display and raw content — file content is sent as raw context, display stays clean
+    const sanitize = (s: string) => s.replace(/\0/g, '').replace(/[\uD800-\uDFFF]/g, '');
+    let displayContent: string;
+    let rawContent: string;
+    if (pendingFile && textInput) {
+      displayContent = `📄 **${pendingFile.name}**\n\n${textInput}`;
+      rawContent = sanitize(`[File: ${pendingFile.name}]\n\n${pendingFile.content}\n\n${textInput}`);
+    } else if (pendingFile) {
+      displayContent = `📄 **${pendingFile.name}** (${(pendingFile.size / 1024).toFixed(1)} KB)`;
+      rawContent = sanitize(`[File: ${pendingFile.name}]\n\n${pendingFile.content}`);
+    } else {
+      displayContent = textInput;
+      rawContent = textInput;
+    }
+
+    if (!overrideText) { setInput(''); setPendingFile(null); }
     setShowAnalysisButton(false);
     setIsTyping(true);
     setStreamingContent('');
@@ -404,7 +402,7 @@ export default function App() {
       if (!currentChatId) {
         const { data: chatData, error } = await supabase.from('chats').insert({
           user_id: currentUser.id,
-          title: userMsg.substring(0, 50),
+          title: (textInput || pendingFile?.name || 'File').substring(0, 50),
         }).select().single();
         if (error) { toast.error(`Chat Init Error: ${error.message}`); throw error; }
         currentChatId = chatData.id;
@@ -418,11 +416,17 @@ export default function App() {
       const { data: insertedUserMsg, error: msgError } = await supabase.from('messages').insert({
         chat_id: currentChatId,
         role: 'user',
-        content: userMsg,
+        content: displayContent,
+        raw_text: rawContent !== displayContent ? rawContent : null,
       }).select().single();
 
       if (msgError) { toast.error(`Write Error: ${msgError.message}`); throw msgError; }
-      setMessages(prev => [...prev, { id: insertedUserMsg?.id, role: 'user', content: userMsg }]);
+      setMessages(prev => [...prev, {
+        id: insertedUserMsg?.id,
+        role: 'user',
+        content: displayContent,
+        rawText: rawContent !== displayContent ? rawContent : undefined,
+      }]);
 
       const builtPrompt = buildSystemPrompt({
         systemPromptBase: systemPrompt || COCKROACH_DEFAULT_SYSTEM_PROMPT,
@@ -434,7 +438,7 @@ export default function App() {
       const apiMessages = [
         { role: 'system', content: builtPrompt },
         ...messages.map(m => ({ role: m.role, content: m.rawText || m.content })),
-        { role: 'user', content: urlCtx ? `${userMsg}${urlCtx}` : userMsg },
+        { role: 'user', content: urlCtx ? `${rawContent}${urlCtx}` : rawContent },
       ];
 
       setIsTyping(false);
@@ -453,7 +457,7 @@ export default function App() {
       setMessages(prev => [...prev, { id: insertedAsstMsg?.id, role: 'assistant', content: fullContent }]);
 
       // Idea detection — offer full analysis if the user described a startup idea
-      if (!overrideText && detectStartupIdea(userMsg)) {
+      if (!overrideText && textInput && detectStartupIdea(textInput)) {
         setShowAnalysisButton(true);
       }
 
@@ -1036,9 +1040,7 @@ export default function App() {
                       {msg.role === 'assistant' ? (
                         /* ── ASSISTANT: left-aligned ── */
                         <div
-                          className="flex items-start gap-3 py-1 pl-4 pr-8"
-                          onMouseEnter={() => setHoveredMsgKey(msg.id || String(i))}
-                          onMouseLeave={() => setHoveredMsgKey(null)}
+                          className="flex items-start gap-3 py-1 pl-4 pr-8 group/msg"
                         >
                           <div className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center bg-background border border-border overflow-hidden mt-1">
                             <Bot size={13} className="text-primary" />
@@ -1066,9 +1068,8 @@ export default function App() {
                                 </motion.div>
                               )}
                             </motion.div>
-                            {/* Action bar — state-based hover */}
-                            <div className={cn("flex items-center gap-0.5 mt-1.5 pl-1 transition-opacity duration-150",
-                              hoveredMsgKey === (msg.id || String(i)) ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                            {/* Action bar — CSS group-hover for reliable click */}
+                            <div className="flex items-center gap-0.5 mt-1.5 pl-1 transition-opacity duration-150 opacity-0 group-hover/msg:opacity-100 pointer-events-none group-hover/msg:pointer-events-auto">
                               {([
                                 { icon: Copy, title: 'Copy', onClick: () => { navigator.clipboard.writeText(msg.content); toast.success('Copied'); } },
                                 { icon: ThumbsUp, title: 'Good', onClick: () => setMessageRatings(r => ({ ...r, [msg.id || String(i)]: 'up' })), active: messageRatings[msg.id || String(i)] === 'up' },
@@ -1103,18 +1104,17 @@ export default function App() {
                       ) : (
                         /* ── USER: right-aligned ── */
                         <div
-                          className="flex items-start gap-3 justify-end py-1 pr-4 pl-8"
-                          onMouseEnter={() => setHoveredMsgKey(msg.id || String(i))}
-                          onMouseLeave={() => setHoveredMsgKey(null)}
+                          className="flex items-start gap-3 justify-end py-1 pr-4 pl-8 group/msg"
+                          onMouseEnter={() => {}}
+                          onMouseLeave={() => {}}
                         >
                           <div className="flex flex-col items-end min-w-0 max-w-[75%]">
                             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
                               className="bg-surface-mid border border-border/40 rounded-2xl rounded-tr-sm px-4 py-3 text-[14px] text-foreground leading-relaxed">
                               <p className="whitespace-pre-wrap break-words">{msg.content}</p>
                             </motion.div>
-                            {/* User action bar */}
-                            <div className={cn("flex items-center gap-0.5 mt-1.5 pr-1 justify-end transition-opacity duration-150",
-                              hoveredMsgKey === (msg.id || String(i)) ? "opacity-100" : "opacity-0 pointer-events-none")}>
+                            {/* User action bar — CSS group-hover */}
+                            <div className="flex items-center gap-0.5 mt-1.5 pr-1 justify-end transition-opacity duration-150 opacity-0 group-hover/msg:opacity-100 pointer-events-none group-hover/msg:pointer-events-auto">
                               <button onClick={() => { navigator.clipboard.writeText(msg.rawText || msg.content); toast.success('Copied'); }}
                                 title="Copy" className="p-1.5 rounded-lg text-muted-foreground/60 hover:text-muted-foreground hover:bg-white/5 transition-all"><Copy size={13} /></button>
                               <button onClick={() => handleEditUserMessage(msg)}
@@ -1175,6 +1175,24 @@ export default function App() {
              )}
              <div className="max-w-3xl mx-auto relative group z-50">
                 <div className="bg-card/90 backdrop-blur-2xl border border-white/10 rounded-[28px] shadow-[0_12px_40px_-12px_rgba(0,0,0,0.5)] focus-within:border-primary/50 transition-all focus-within:shadow-[0_12px_40px_-12px_rgba(255,255,255,0.1)] focus-within:ring-1 focus-within:ring-primary/30">
+                  {/* Pending file chip */}
+                  {pendingFile && (
+                    <div className="px-5 pt-3 pb-1">
+                      <div className="inline-flex items-center gap-2.5 bg-surface-mid/70 border border-border/50 rounded-xl px-3 py-2 max-w-xs">
+                        <FileText size={12} className="text-primary shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-medium text-foreground truncate">{pendingFile.name}</p>
+                          <p className="text-[10px] text-muted-foreground/70">{(pendingFile.size / 1024).toFixed(1)} KB · attached</p>
+                        </div>
+                        <button
+                          onClick={() => setPendingFile(null)}
+                          className="p-0.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors shrink-0"
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {/* URL preview cards */}
                   {urlPreviews.size > 0 && (
                     <div className="px-4 pt-3 pb-1 space-y-1.5">
@@ -1291,7 +1309,7 @@ export default function App() {
                            <span className="text-[11px] font-mono font-medium text-muted-foreground px-2">Return ↵</span>
                            <button
                              onClick={() => handleSendMessage()}
-                             disabled={!input.trim() || isTyping}
+                             disabled={(!input.trim() && !pendingFile) || isTyping}
                              className="bg-primary disabled:opacity-50 hover:brightness-[1.15] text-background p-2 rounded-xl transition-all active:scale-90 shadow-[0_0_15px_rgba(var(--primary),0.4)] disabled:shadow-none"
                            >
                              <ChevronRight size={18} strokeWidth={3} />

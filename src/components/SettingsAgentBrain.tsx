@@ -36,6 +36,7 @@ export default function SettingsAgentBrain() {
   const [newMemoryCategory, setNewMemoryCategory] = React.useState('general');
   const [isAddingMemory, setIsAddingMemory] = React.useState(false);
   const [showAddMemory, setShowAddMemory] = React.useState(false);
+  const [showClearConfirm, setShowClearConfirm] = React.useState(false);
 
   React.useEffect(() => {
     if (currentUser) {
@@ -318,13 +319,31 @@ export default function SettingsAgentBrain() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {memoryItems.length > 0 && (
-              <button
-                onClick={handleClearAllMemory}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-destructive hover:bg-destructive/10 border border-destructive/20 hover:border-destructive/40 rounded-lg transition-all uppercase tracking-widest"
-              >
-                <Trash2 size={11} />
-                <span>Clear All</span>
-              </button>
+              showClearConfirm ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground">Clear all {memoryItems.length} items?</span>
+                  <button
+                    onClick={() => { handleClearAllMemory(); setShowClearConfirm(false); }}
+                    className="px-3 py-1.5 text-[10px] font-bold text-white bg-destructive hover:brightness-110 rounded-lg transition-all uppercase tracking-widest"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    onClick={() => setShowClearConfirm(false)}
+                    className="px-3 py-1.5 text-[10px] font-bold text-muted-foreground hover:text-foreground border border-border rounded-lg transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowClearConfirm(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-destructive hover:bg-destructive/10 border border-destructive/20 hover:border-destructive/40 rounded-lg transition-all uppercase tracking-widest"
+                >
+                  <Trash2 size={11} />
+                  <span>Clear All</span>
+                </button>
+              )
             )}
             <button
               onClick={() => setShowAddMemory(!showAddMemory)}

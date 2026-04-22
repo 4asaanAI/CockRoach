@@ -109,3 +109,6 @@ create table public.user_personalization (
 );
 grant all on table public.user_personalization to anon, authenticated;
 alter table public.user_personalization disable row level security;
+
+-- V4: Password column for profile login verification
+alter table public.users add column if not exists password text;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, X, Mail, User, Upload, ArrowRight } from 'lucide-react';
+import { Plus, X, Mail, User, Upload, ArrowRight, Lock } from 'lucide-react';
 import { useAppStore, UserProfile } from '../store';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
@@ -16,9 +16,36 @@ export default function ProfileSelector({ onSelect }: { onSelect: () => void }) 
   const [hoveredId, setHoveredId] = React.useState<string | null>(null);
   const avatarInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleSelect = (profile: UserProfile) => {
-    setCurrentUser(profile);
-    onSelect();
+  const [passwordCheckProfile, setPasswordCheckProfile] = React.useState<UserProfile | null>(null);
+  const [enteredPassword, setEnteredPassword] = React.useState('');
+  const [passwordError, setPasswordError] = React.useState(false);
+  const [passwordLoading, setPasswordLoading] = React.useState(false);
+
+  const handleSelect = async (profile: UserProfile) => {
+    const { data } = await supabase.from('users').select('password').eq('id', profile.id).single();
+    if (data?.password) {
+      setPasswordCheckProfile(profile);
+      setEnteredPassword('');
+      setPasswordError(false);
+    } else {
+      setCurrentUser(profile);
+      onSelect();
+    }
+  };
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordCheckProfile) return;
+    setPasswordLoading(true);
+    const { data } = await supabase.from('users').select('password').eq('id', passwordCheckProfile.id).single();
+    if (data?.password === enteredPassword) {
+      setCurrentUser(passwordCheckProfile);
+      setPasswordCheckProfile(null);
+      onSelect();
+    } else {
+      setPasswordError(true);
+    }
+    setPasswordLoading(false);
   };
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -169,6 +196,73 @@ export default function ProfileSelector({ onSelect }: { onSelect: () => void }) 
       >
         Select your profile to continue
       </motion.p>
+
+      {/* Password Verification Modal */}
+      <AnimatePresence>
+        {passwordCheckProfile && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40"
+              onClick={() => setPasswordCheckProfile(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="fixed z-50 bg-[#141414] border border-white/10 rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-foreground">Enter Passcode</h2>
+                  <p className="text-[12px] text-muted-foreground mt-0.5">
+                    Access restricted for <span className="text-foreground font-semibold">{passwordCheckProfile.name}</span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => setPasswordCheckProfile(null)}
+                  className="p-2 text-muted-foreground hover:text-foreground hover:bg-white/5 rounded-xl transition-all"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handlePasswordSubmit} className="space-y-4">
+                <div className="space-y-1.5">
+                  <div className="relative">
+                    <Lock size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/60" />
+                    <input
+                      required
+                      autoFocus
+                      type="password"
+                      placeholder="Passcode"
+                      value={enteredPassword}
+                      onChange={e => { setEnteredPassword(e.target.value); setPasswordError(false); }}
+                      className={cn(
+                        "w-full bg-background border rounded-xl py-3 pl-9 pr-4 text-[14px] text-foreground focus:outline-none transition-all",
+                        passwordError ? "border-destructive/60 focus:border-destructive" : "border-border focus:border-primary/50"
+                      )}
+                    />
+                  </div>
+                  {passwordError && (
+                    <p className="text-[11px] text-destructive px-1">Incorrect passcode. Try again.</p>
+                  )}
+                </div>
+                <button
+                  type="submit"
+                  disabled={passwordLoading || !enteredPassword}
+                  className="w-full py-3 bg-primary hover:brightness-110 text-white text-[12px] font-bold rounded-xl transition-all shadow-lg shadow-primary/20 disabled:opacity-40 uppercase tracking-widest active:scale-[0.98]"
+                >
+                  {passwordLoading ? 'Verifying...' : 'Enter'}
+                </button>
+              </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Create Profile Modal */}
       <AnimatePresence>

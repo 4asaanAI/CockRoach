@@ -33,43 +33,12 @@ async function fetchAzureOpenAIPricing(
   modelName: string
 ): Promise<{ input: number; output: number; status: FetchStatus }> {
   try {
-    // Normalize: 'gpt-5.3-chat' → 'GPT-5.3', 'gpt-4o' → 'GPT-4o'
-    const normalized = modelName
-      .replace(/-chat$/i, '')
-      .replace(/-preview$/i, '')
-      .replace(/^gpt-/i, 'GPT-');
-
-    const filter = `serviceName eq 'Azure OpenAI' and contains(tolower(skuName), tolower('${normalized}'))`;
-    const url = `https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=${encodeURIComponent(filter)}`;
-
-    const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
+    const res = await fetch(`/api/pricing?model=${encodeURIComponent(modelName)}`, {
+      signal: AbortSignal.timeout(9000),
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
     const data = await res.json();
-    const items: any[] = data.Items ?? [];
-    if (!items.length) return { input: 0, output: 0, status: 'not-found' };
-
-    let input = 0;
-    let output = 0;
-
-    for (const item of items) {
-      const meter = (item.meterName ?? '').toLowerCase();
-      const unit  = (item.unitOfMeasure ?? '').toLowerCase();
-
-      // Convert retailPrice to $/1M tokens
-      let perMillion = item.retailPrice as number;
-      if (unit.includes('1k') || unit.includes('1,000 token')) perMillion *= 1000;
-      // if unitOfMeasure is already "1M tokens" or "1,000,000", leave as-is
-
-      const isInput  = meter.includes('input')  || meter.includes('prompt');
-      const isOutput = meter.includes('output') || meter.includes('completion');
-
-      if (isInput  && !input)  input  = perMillion;
-      if (isOutput && !output) output = perMillion;
-    }
-
-    if (input || output) return { input, output, status: 'found' };
-    return { input: 0, output: 0, status: 'not-found' };
+    return data as { input: number; output: number; status: FetchStatus };
   } catch {
     return { input: 0, output: 0, status: 'error' };
   }
@@ -114,13 +83,12 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
     }
   }, [setPricingRates]);
 
-  // Auto-fetch on first open of LLM tab (once per session if not already set)
+  // Auto-fetch when LLM tab opens or model changes
   React.useEffect(() => {
     if (activeTab !== 'llm') return;
     if (pricingRates.isCustom) return;
-    if (pricingRates.lastFetched) return; // already fetched this session
     triggerPricingFetch(azureConfig.model || 'gpt-5.3-chat');
-  }, [activeTab]);
+  }, [activeTab, azureConfig.model]);
 
   const saveCustomRates = () => {
     const inp = parseFloat(draftInput);
@@ -188,20 +156,25 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
   }, [azureConfig]);
 
   const handleProfileSave = async () => {
-    updateCurrentUser(profileData);
+    updateCurrentUser({ name: profileData.name, email: profileData.email, avatar: profileData.avatar });
     try {
       if (!currentUser) return;
-      const { error } = await supabase.from('users').update({
+      const updateData: Record<string, any> = {
         name: profileData.name,
         email: profileData.email,
         avatar: profileData.avatar,
-        updated_at: new Date().toISOString()
-      }).eq('id', currentUser.id);
-      
+        updated_at: new Date().toISOString(),
+      };
+      if (profileData.password) {
+        updateData.password = profileData.password;
+      }
+      const { error } = await supabase.from('users').update(updateData).eq('id', currentUser.id);
+
       if (error) {
          toast.error(`Identity Update Failed: ${error.message}`);
       } else {
          toast.success('Identity updated and synced.');
+         if (profileData.password) setProfileData(d => ({ ...d, password: '' }));
       }
     } catch (err: any) {
       toast.error(`Update Error: ${err.message}`);

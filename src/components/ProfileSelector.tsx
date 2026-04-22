@@ -1,18 +1,19 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Plus, X, Mail, User, Upload, ArrowRight, Lock } from 'lucide-react';
-import { useAppStore, UserProfile } from '../store';
+import { useAppStore, UserProfile, INITIAL_PROFILES } from '../store';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 
 export default function ProfileSelector({ onSelect }: { onSelect: () => void }) {
-  const { profiles, addProfile, setCurrentUser } = useAppStore();
+  const { profiles, addProfile, setProfiles, setCurrentUser } = useAppStore();
 
   const [isCreating, setIsCreating] = React.useState(false);
   const [newName, setNewName] = React.useState('');
   const [newEmail, setNewEmail] = React.useState('');
   const [newAvatar, setNewAvatar] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+  const [profilesLoading, setProfilesLoading] = React.useState(true);
   const [hoveredId, setHoveredId] = React.useState<string | null>(null);
   const avatarInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -20,6 +21,36 @@ export default function ProfileSelector({ onSelect }: { onSelect: () => void }) 
   const [enteredPassword, setEnteredPassword] = React.useState('');
   const [passwordError, setPasswordError] = React.useState(false);
   const [passwordLoading, setPasswordLoading] = React.useState(false);
+
+  // Load all users from Supabase and merge with store (handles multi-device, missing localStorage)
+  React.useEffect(() => {
+    const loadAllProfiles = async () => {
+      try {
+        const { data } = await supabase.from('users').select('id, name, email, avatar');
+        // Build merged map: INITIAL_PROFILES → store profiles → DB profiles (later entries win for non-initial)
+        const byId = new Map<string, UserProfile>();
+        INITIAL_PROFILES.forEach(p => byId.set(p.id, p));
+        profiles.forEach(p => byId.set(p.id, { ...byId.get(p.id), ...p }));
+        if (data) {
+          data.forEach(u => {
+            if (!byId.has(u.id)) {
+              byId.set(u.id, { id: u.id, name: u.name || '', email: u.email || '', avatar: u.avatar || '' });
+            }
+          });
+        }
+        const merged = [...byId.values()];
+        // Only update store if something changed (avoids unnecessary re-renders)
+        if (merged.length !== profiles.length || merged.some((p, i) => p.id !== profiles[i]?.id)) {
+          setProfiles(merged);
+        }
+      } catch {
+        // Silently fall back to store profiles
+      } finally {
+        setProfilesLoading(false);
+      }
+    };
+    loadAllProfiles();
+  }, []);
 
   const handleSelect = async (profile: UserProfile) => {
     const { data } = await supabase.from('users').select('password').eq('id', profile.id).single();
@@ -58,7 +89,7 @@ export default function ProfileSelector({ onSelect }: { onSelect: () => void }) 
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim() || !newEmail.trim()) return;
+    if (!newName.trim() || !newEmail.trim() || loading) return;
     setLoading(true);
 
     const newProfile: UserProfile = {
@@ -110,6 +141,14 @@ export default function ProfileSelector({ onSelect }: { onSelect: () => void }) 
         transition={{ duration: 0.5, delay: 0.1 }}
         className="flex flex-wrap items-center justify-center gap-8"
       >
+        {profilesLoading && profiles.length === 0 && (
+          [1, 2, 3, 4].map(n => (
+            <div key={n} className="flex flex-col items-center gap-3">
+              <div className="w-[130px] h-[130px] rounded-[22px] border-2 border-white/10 bg-white/[0.03] animate-pulse" />
+              <div className="h-4 w-20 bg-white/10 rounded animate-pulse" />
+            </div>
+          ))
+        )}
         {profiles.map((profile, i) => (
           <motion.button
             key={profile.id}

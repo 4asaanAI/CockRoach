@@ -43,6 +43,7 @@ type AppState = {
   setCurrentUser: (user: UserProfile | null) => void;
   updateCurrentUser: (userData: Partial<UserProfile>) => void;
   addProfile: (profile: UserProfile) => void;
+  setProfiles: (profiles: UserProfile[]) => void;
   setKBToggles: (toggles: Partial<KBToggles>) => void;
   setMemoryItems: (items: MemoryItem[]) => void;
   setSystemPrompt: (prompt: string) => void;
@@ -110,7 +111,12 @@ export const useAppStore = create<AppState>()(
         currentUser: state.currentUser ? { ...state.currentUser, ...userData } : null,
         profiles: state.profiles.map(p => p.id === state.currentUser?.id ? { ...p, ...userData } : p),
       })),
-      addProfile: (profile) => set((state) => ({ profiles: [...state.profiles, profile] })),
+      addProfile: (profile) => set((state) => ({
+        profiles: state.profiles.some(p => p.id === profile.id)
+          ? state.profiles.map(p => p.id === profile.id ? { ...p, ...profile } : p)
+          : [...state.profiles, profile],
+      })),
+      setProfiles: (profiles) => set({ profiles }),
       setKBToggles: (toggles) => set((state) => ({ kbToggles: { ...state.kbToggles, ...toggles } })),
       setMemoryItems: (items) => set({ memoryItems: items }),
       setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),

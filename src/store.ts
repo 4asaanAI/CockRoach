@@ -46,17 +46,41 @@ const INITIAL_PROFILES: UserProfile[] = [
     id: '11111111-1111-1111-1111-111111111111',
     name: 'DagnA',
     email: 'angad@email.com',
-    avatar: '',
+    avatar: '/profiles/DagnA.png',
     isInitial: true,
-  }
+  },
+  {
+    id: '22222222-2222-2222-2222-222222222222',
+    name: 'Subi',
+    email: 'shbhsingh25@gmail.com',
+    avatar: '/profiles/Subi.png',
+    isInitial: true,
+  },
+  {
+    id: '33333333-3333-3333-3333-333333333333',
+    name: 'ManU',
+    email: 'abhi.prabal@gmail.com',
+    avatar: '/profiles/ManU.png',
+    isInitial: true,
+  },
+  {
+    id: '44444444-4444-4444-4444-444444444444',
+    name: 'Gill Saab',
+    email: 'singhgillaakriti@gmail.com',
+    avatar: '/profiles/Gill.png',
+    isInitial: true,
+  },
 ];
 
+// Display-only defaults. The real Azure credentials live in server env vars
+// (AZURE_OPENAI_*) and are used only by the /api/chat proxy; the client never
+// sees the key.
 const DEFAULT_AZURE_CONFIG = {
-  apiKey: 'DKUDyLkncgn1VtOAfJAA9wQdRAOrbQCD2bjLnme8dTlfElC5n1mLJQQJ99CDACYeBjFXJ3w3AAAAACOGNEId',
-  endpoint: 'https://layaaos.cognitiveservices.azure.com/',
-  deployment: 'CockRoach_2.0',
-  model: 'gpt-5.3-chat',
-  version: '2024-12-01-preview',
+  apiKey: '',
+  endpoint: '',
+  deployment: '',
+  model: '',
+  version: '',
 };
 
 const DEFAULT_PRICING: PricingRates = {
@@ -95,7 +119,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'cockroach-storage',
-      version: 5,
+      version: 6,
       migrate: (persistedState: any, version: number) => {
         if (version < 4) {
           return {
@@ -108,9 +132,20 @@ export const useAppStore = create<AppState>()(
             pricingRates: DEFAULT_PRICING,
           };
         }
-        // v4 → v5: add pricingRates without resetting anything else
         if (version < 5) {
-          return { ...persistedState, pricingRates: DEFAULT_PRICING };
+          persistedState = { ...persistedState, pricingRates: DEFAULT_PRICING };
+        }
+        // v5 → v6: sync the 4 default profiles (DagnA/Subi/ManU/Gill) into
+        // persisted state. Refreshes avatar/name/email on existing defaults,
+        // appends missing ones. User-created profiles (non-default ids) are
+        // preserved untouched. Idempotent.
+        if (version < 6) {
+          const existing: UserProfile[] = persistedState.profiles ?? [];
+          const defaultsById = new Map(INITIAL_PROFILES.map(p => [p.id, p]));
+          const merged = existing.map(p => defaultsById.has(p.id) ? { ...p, ...defaultsById.get(p.id)! } : p);
+          const existingIds = new Set(existing.map(p => p.id));
+          const appended = INITIAL_PROFILES.filter(p => !existingIds.has(p.id));
+          persistedState = { ...persistedState, profiles: [...merged, ...appended] };
         }
         return persistedState;
       }

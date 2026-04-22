@@ -1,4 +1,4 @@
-import { COCKROACH_DEFAULT_SYSTEM_PROMPT, KB_01, KB_02, KB_03, KB_04 } from './kb-constants';
+import { KB_01, KB_02, KB_03, KB_04 } from './kb-constants';
 
 export interface KBToggles {
   kb01: boolean;

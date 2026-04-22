@@ -212,19 +212,21 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
      setAzureConfig(localAzureConfig);
      try {
        if (!currentUser) return;
-       const { error } = await supabase.from('azure_configs').update({
-         api_key: localAzureConfig.apiKey,
+       // api_key is managed server-side and always null here
+       const { error } = await supabase.from('azure_configs').upsert({
+         user_id: currentUser.id,
+         api_key: null,
          endpoint: localAzureConfig.endpoint,
          deployment: localAzureConfig.deployment,
          model: localAzureConfig.model,
          version: localAzureConfig.version,
-         updated_at: new Date().toISOString()
-       }).eq('user_id', currentUser.id);
-       
+         updated_at: new Date().toISOString(),
+       }, { onConflict: 'user_id' });
+
        if (error) {
           toast.error(`Config Sync Failed: ${error.message}`);
        } else {
-          toast.success('Configuration synced to remote vault.');
+          toast.success('Configuration saved.');
        }
      } catch (err: any) {
         toast.error(`Sync Error: ${err.message}`);
@@ -512,15 +514,19 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
                     if (activeProvider === 'azure') {
                       try {
                         toast.loading('Testing connection...', { id: 'conn-test' });
-                        const baseUrl = azureConfig.endpoint.endsWith('/') ? azureConfig.endpoint.slice(0, -1) : azureConfig.endpoint;
-                        const url = `${baseUrl}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.version}`;
-                        const res = await fetch(url.replace(/([^:]\/)\/+/g, "$1"), {
+                        const res = await fetch('/api/chat', {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json', 'api-key': azureConfig.apiKey },
-                          body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }], max_tokens: 5, stream: false })
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }] }),
                         });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error?.message || 'Connection failed');
+                        if (!res.ok) {
+                          let message = res.statusText;
+                          try { const err = await res.json(); message = err?.error ?? message; } catch { /* non-json */ }
+                          throw new Error(message);
+                        }
+                        // Drain the stream briefly to confirm the upstream is alive
+                        const reader = res.body?.getReader();
+                        if (reader) { await reader.read(); await reader.cancel(); }
                         setConnectionStatus('ok');
                         toast.success('Azure connection verified ✓', { id: 'conn-test' });
                       } catch (e: any) {
@@ -543,15 +549,16 @@ export default function SettingsLLM({ sessionTokens }: { sessionTokens?: { promp
                     <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em] px-1">API Secret Key</label>
                     <div className="relative group">
                       <Key size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <input 
-                        type="password" 
-                        placeholder={activeProvider === 'azure' ? "Azure API Key" : "sk-••••••••••••••••••••••••"}
-                        value={activeProvider === 'azure' ? localAzureConfig.apiKey : ''}
-                        onChange={(e) => activeProvider === 'azure' && setLocalAzureConfig({ ...localAzureConfig, apiKey: e.target.value })}
-                        className="w-full bg-background border border-border rounded-xl py-3 pl-10 pr-4 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all font-mono placeholder:text-muted-foreground/50 shadow-inner"
+                      <input
+                        type="password"
+                        placeholder="Managed server-side"
+                        value=""
+                        readOnly
+                        disabled
+                        className="w-full bg-background/40 border border-border rounded-xl py-3 pl-10 pr-4 text-sm text-muted-foreground focus:outline-none transition-all font-mono placeholder:text-muted-foreground/50 shadow-inner cursor-not-allowed"
                       />
                     </div>
-                    <p className="text-[9px] text-muted-foreground/70 italic px-1 leading-relaxed">Keys are encrypted using AES-256 and stored in your dedicated secure vault.</p>
+                    <p className="text-[9px] text-muted-foreground/70 italic px-1 leading-relaxed">Credentials live in the server environment and are never exposed to the browser. The /api/chat proxy adds the key per request.</p>
                   </div>
 
                   <div className="space-y-2">

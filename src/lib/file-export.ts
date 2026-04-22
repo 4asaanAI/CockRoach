@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType } from 'docx';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@e965/xlsx';
 import pptxgen from 'pptxgenjs';
 
 // ── Markdown block parser ──────────────────────────────────────────────────

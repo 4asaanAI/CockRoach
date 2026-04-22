@@ -32,7 +32,6 @@ import {
   ThumbsUp,
   ThumbsDown,
   RefreshCw,
-  MoreHorizontal,
   FileDown,
   Globe,
 } from 'lucide-react';
@@ -40,7 +39,6 @@ import DocumentViewer from './components/DocumentViewer';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import mermaid from 'mermaid';
 import { detectUrls, scrapeUrl, getUrlDomain, buildUrlContext, type UrlPreview } from './lib/url-scraper';
 import MermaidDiagram from './components/MermaidDiagram';
 
@@ -100,7 +98,7 @@ const MD_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = 
 };
 
 export default function App() {
-  const { currentUser, setAzureConfig, azureConfig, setCurrentUser, kbToggles, memoryItems, setMemoryItems, systemPrompt, setSystemPrompt } = useAppStore();
+  const { currentUser, setAzureConfig, setCurrentUser, kbToggles, memoryItems, setMemoryItems, systemPrompt, setSystemPrompt } = useAppStore();
   const [isAuthenticated, setIsAuthenticated] = React.useState(false);
   const [authChecking, setAuthChecking] = React.useState(true);
   const [isLeftSidebarCollapsed, setIsLeftSidebarCollapsed] = React.useState(false);
@@ -128,7 +126,6 @@ export default function App() {
   const [showAnalysisButton, setShowAnalysisButton] = React.useState(false);
   const [documentViewerContent, setDocumentViewerContent] = React.useState<string | null>(null);
   const [messageRatings, setMessageRatings] = React.useState<Record<string, 'up' | 'down'>>({});
-  const [editingUserMsgId, setEditingUserMsgId] = React.useState<string | null>(null);
   const [hoveredMsgKey, setHoveredMsgKey] = React.useState<string | null>(null);
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchFocused, setSearchFocused] = React.useState(false);
@@ -176,26 +173,22 @@ export default function App() {
          if (updateError) toast.error(`Profile Sync Warning: ${updateError.message}`);
       }
 
-      // Load Azure Config
+      // Azure config is display-only in the client; the real credentials live
+      // in server env vars and are used by /api/chat. We still load the row
+      // (if any) so the settings panel shows the deployment/model, but we no
+      // longer seed a row with a hardcoded key for new profiles.
       const { data: configData, error: configError } = await supabase.from('azure_configs').select('*').eq('user_id', user.id).single();
       if (configError && configError.code !== 'PGRST116') {
          toast.error(`Config Fetch Error: ${configError.message}`);
       }
-
       if (configData) {
-         setAzureConfig({ apiKey: configData.api_key, endpoint: configData.endpoint, deployment: configData.deployment, model: configData.model, version: configData.version });
-      } else {
-         const defaultConfig = {
-           user_id: user.id,
-           api_key: 'DKUDyLkncgn1VtOAfJAA9wQdRAOrbQCD2bjLnme8dTlfElC5n1mLJQQJ99CDACYeBjFXJ3w3AAAAACOGNEId',
-           endpoint: 'https://layaaos.cognitiveservices.azure.com/',
-           deployment: 'CockRoach_2.0',
-           model: 'gpt-5.3-chat',
-           version: '2024-12-01-preview'
-         };
-         const { error: insertConfigError } = await supabase.from('azure_configs').insert(defaultConfig);
-         if (insertConfigError) toast.error(`Config Creation Error: ${insertConfigError.message}`);
-         setAzureConfig({ apiKey: defaultConfig.api_key, endpoint: defaultConfig.endpoint, deployment: defaultConfig.deployment, model: defaultConfig.model, version: defaultConfig.version });
+         setAzureConfig({
+           apiKey: '',
+           endpoint: configData.endpoint ?? '',
+           deployment: configData.deployment ?? '',
+           model: configData.model ?? '',
+           version: configData.version ?? '',
+         });
       }
 
       await loadChatHistory(user.id);
@@ -244,19 +237,43 @@ export default function App() {
 
   const handleShareChat = async () => {
     if (!activeChatId) return;
-    // Generate or fetch existing share token
+    const nowIso = new Date().toISOString();
+    const expiryIso = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Reuse existing token only if still active (not expired, not revoked)
+    const { data: existing } = await supabase
+      .from('chats')
+      .select('share_token, share_expires_at, share_revoked_at')
+      .eq('id', activeChatId)
+      .single();
+
     let token: string;
-    const { data: existing } = await supabase.from('chats').select('share_token').eq('id', activeChatId).single();
-    if (existing?.share_token) {
+    const isActive = existing?.share_token
+      && !existing.share_revoked_at
+      && (!existing.share_expires_at || existing.share_expires_at > nowIso);
+
+    if (isActive && existing?.share_token) {
       token = existing.share_token;
     } else {
       token = crypto.randomUUID();
-      await supabase.from('chats').update({ share_token: token }).eq('id', activeChatId);
+      await supabase.from('chats').update({
+        share_token: token,
+        share_expires_at: expiryIso,
+        share_revoked_at: null,
+      }).eq('id', activeChatId);
     }
+
     const link = `${window.location.origin}${window.location.pathname}?shared=${token}`;
     setShareLink(link);
     navigator.clipboard.writeText(link);
-    toast.success('Share link copied to clipboard!');
+    toast.success('Share link copied — valid for 30 days.');
+  };
+
+  const handleRevokeShareLink = async () => {
+    if (!activeChatId) return;
+    await supabase.from('chats').update({ share_revoked_at: new Date().toISOString() }).eq('id', activeChatId);
+    setShareLink(null);
+    toast.success('Share link revoked.');
   };
 
   // On mount, check for ?shared= param — load that chat in read/write view with banner
@@ -264,22 +281,29 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const sharedToken = params.get('shared');
     if (sharedToken && currentUser) {
-      supabase.from('chats').select('id, title, user_id').eq('share_token', sharedToken).single().then(async ({ data }) => {
-        if (data) {
-          window.history.replaceState({}, '', window.location.pathname);
-          setActiveChatId(data.id);
-          setCurrentPage('chat');
-          if (data.user_id !== currentUser.id) {
-            // Load owner name for banner
-            const { data: owner } = await supabase.from('users').select('name').eq('id', data.user_id).single();
-            setSharedChatBanner(`Shared chat from ${owner?.name || 'another user'} — "${data.title}"`);
+      const nowIso = new Date().toISOString();
+      supabase
+        .from('chats')
+        .select('id, title, user_id, share_expires_at, share_revoked_at')
+        .eq('share_token', sharedToken)
+        .is('share_revoked_at', null)
+        .or(`share_expires_at.is.null,share_expires_at.gt.${nowIso}`)
+        .single()
+        .then(async ({ data }) => {
+          if (data) {
+            window.history.replaceState({}, '', window.location.pathname);
+            setActiveChatId(data.id);
+            setCurrentPage('chat');
+            if (data.user_id !== currentUser.id) {
+              const { data: owner } = await supabase.from('users').select('name').eq('id', data.user_id).single();
+              setSharedChatBanner(`Shared chat from ${owner?.name || 'another user'} — "${data.title}"`);
+            } else {
+              setSharedChatBanner(`Share link active — this is your shared chat "${data.title}"`);
+            }
           } else {
-            setSharedChatBanner(`Share link active — this is your shared chat "${data.title}"`);
+            toast.error('Share link expired, revoked, or invalid.');
           }
-        } else {
-          toast.error('Share link expired or invalid.');
-        }
-      });
+        });
     }
   }, [currentUser?.id]);
 
@@ -296,31 +320,20 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const buildAzureUrl = () => {
-    const base = azureConfig.endpoint.endsWith('/') ? azureConfig.endpoint.slice(0, -1) : azureConfig.endpoint;
-    return `${base}/openai/deployments/${azureConfig.deployment}/chat/completions?api-version=${azureConfig.version}`;
-  };
-
   const streamAzureResponse = async (
     apiMessages: { role: string; content: string }[],
     onChunk: (text: string) => void
   ): Promise<string> => {
-    const url = buildAzureUrl().replace(/([^:]\/)\/+/g, '$1');
-    const resp = await fetch(url, {
+    const resp = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': azureConfig.apiKey },
-      body: JSON.stringify({
-        model: azureConfig.deployment || azureConfig.model,
-        messages: apiMessages,
-        temperature: 0.7,
-        stream: true,
-        stream_options: { include_usage: true },
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: apiMessages, temperature: 0.7 }),
     });
 
     if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(`Azure Error: ${err.error?.message || resp.statusText}`);
+      let message = resp.statusText;
+      try { const err = await resp.json(); message = err?.error ?? message; } catch { /* non-json */ }
+      throw new Error(`Chat API error: ${message}`);
     }
 
     const reader = resp.body!.getReader();
@@ -710,7 +723,6 @@ export default function App() {
 
   const handleEditUserMessage = (msg: { id?: string; content: string; rawText?: string }) => {
     setInput(msg.rawText || msg.content);
-    setEditingUserMsgId(msg.id || null);
   };
 
   const handleRunFullAnalysis = () => {
@@ -969,13 +981,22 @@ export default function App() {
            <div className="flex items-center justify-end gap-3 w-1/3">
               {/* Download Chat — only when a chat is active */}
               {activeChatId && currentPage === 'chat' && messages.length > 0 && (
-                <button
-                  onClick={handleDownloadChat}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-mid border border-border rounded-full text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all uppercase tracking-widest"
-                >
-                  <FileDown size={12} />
-                  <span>Download</span>
-                </button>
+                <>
+                  <button
+                    onClick={handleShareChat}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-mid border border-border rounded-full text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all uppercase tracking-widest"
+                  >
+                    <Share2 size={12} />
+                    <span>Share</span>
+                  </button>
+                  <button
+                    onClick={handleDownloadChat}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-mid border border-border rounded-full text-[10px] font-bold text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all uppercase tracking-widest"
+                  >
+                    <FileDown size={12} />
+                    <span>Download</span>
+                  </button>
+                </>
               )}
 
               <div className="flex items-center gap-2 px-3 py-1 bg-surface-mid border border-border rounded-full hover:border-primary-border/40 transition-all cursor-pointer group" onClick={() => setIsBrutalHonesty(!isBrutalHonesty)}>
@@ -1023,6 +1044,12 @@ export default function App() {
                 className="text-[10px] font-bold text-primary hover:brightness-110 uppercase tracking-widest shrink-0"
               >
                 Copy
+              </button>
+              <button
+                onClick={handleRevokeShareLink}
+                className="text-[10px] font-bold text-destructive hover:brightness-110 uppercase tracking-widest shrink-0"
+              >
+                Revoke
               </button>
               <button
                 onClick={() => setShareLink(null)}

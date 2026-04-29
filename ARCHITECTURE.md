@@ -1,19 +1,24 @@
 # Cockroach — Architecture & Internals
 
 Complete reference for how the platform is built and why. Read alongside
-`README.md` (setup) and `SECURITY.md` (trust model).
+`README.md` (setup), `documentation.md` (product narrative),
+`SECURITY.md` (trust model), and `claude.md` (live build context).
 
-Last updated: 2026-04-22.
+Last updated: 2026-06-29.
 
 ---
 
 ## 1 · What Cockroach is
 
-An internal AI-powered entrepreneurial-intelligence web app for ≤5
-trusted profiles. Users pick a profile (no passwords), chat with the
-Cockroach agent in one of nine working modes, and export polished
-artifacts (reports, decks, spreadsheets). Not a multi-tenant SaaS. Not
-publicly registerable. See `SECURITY.md` for the explicit trust model.
+An AI-powered entrepreneurial-intelligence web app — **a product of
+[Layaa AI](https://www.layaa.ai)**, modeled on the OpenAI → ChatGPT
+relationship. Users chat with the Cockroach agent in one of nine
+(soon sixteen) working modes and export polished artifacts (reports,
+decks, spreadsheets).
+
+**Stage:** Currently a closed-internal build (no auth, ≤5 trusted
+profiles) being prepared for **public SaaS launch** in ~30 days from
+2026-06-29. See `claude.md` for the live launch plan.
 
 Tagline: *"Not a unicorn. Better."*
 

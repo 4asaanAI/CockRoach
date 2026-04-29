@@ -4,12 +4,17 @@
 > The startups that survive aren't unicorns — they're cockroaches.
 > Resilient. Ugly. Unstoppable.
 
+**A product of [Layaa AI](https://www.layaa.ai).** CockRoach is to Layaa
+AI what ChatGPT is to OpenAI: a focused, opinionated product within the
+parent company's portfolio.
+
 The complete reference for what CockRoach is, every problem it solves,
 every tool it ships, and every feature on the roadmap. Read alongside:
 
 - `README.md` — setup and stack overview
 - `ARCHITECTURE.md` — engineering internals (modules, APIs, schemas)
 - `SECURITY.md` — trust model and credential rotation
+- `claude.md` — live build context (project state, plan, update log)
 - `kb/base-prompt.md` — the agent's top-level system prompt
 - `kb/modes/*.md` — per-mode behavior guides
 - `kb/SKILLS.md` — deliverable craft (PPT / Excel / PDF rules)
@@ -20,7 +25,7 @@ Status legend used throughout this document:
 - 🚧 **Planned** — designed and scoped, not yet implemented
 - 💭 **Considered** — under evaluation, lower priority
 
-Last updated: 2026-04-22.
+Last updated: 2026-06-29.
 
 ---
 
@@ -62,10 +67,14 @@ Founders, operators, and intrapreneurs who:
   fixed scope
 - Not a substitute for legal, financial, or tax advice — surfaces risks
   and frameworks, recommends professionals for binding decisions
-- Not a multi-tenant SaaS — built as an internal tool for ≤5 trusted
-  profiles (see `SECURITY.md`)
 - Not a yes-machine — bad ideas get scored badly; weak assumptions get
   flagged
+
+> **Stage:** Currently a closed-internal build (no auth, ≤5 trusted
+> profiles) being prepared for **public SaaS launch in ~30 days from
+> 2026-06-29**. Auth, billing, marketing surface, and tier gating are
+> the final additions before launch (see `claude.md` for the live
+> launch plan and current phase).
 
 ---
 
@@ -660,24 +669,32 @@ will be added in Phase 2 of the roadmap.
 
 ## 12 · Trust model summary
 
-Detailed in `SECURITY.md`. Quick recap:
+Detailed in `SECURITY.md`. Quick recap of the **current** posture
+(closed-internal build):
 
-- **No authentication.** This is an internal tool for ≤5 trusted
-  profiles. User identity is a client-generated UUID. RLS is intentionally
-  disabled.
+- **No authentication.** User identity is a client-generated UUID.
+  RLS is intentionally disabled.
 - **Azure key never reaches the browser.** Lives in Vercel env vars,
   used only by `/api/chat`.
 - **Origin allow-list + per-IP rate limit** on both `/api/chat` and
   `/api/scrape`.
-- **`max_tokens: 4000` cap** on chat completions to prevent runaway costs.
+- **`max_completion_tokens: 4000` cap** on chat completions to prevent
+  runaway costs.
 - **Stream cancel** kills upstream generation immediately.
 - **Share tokens** have 30-day expiry + explicit revoke.
 - **Mermaid output sanitized** with DOMPurify (XSS defense).
 
-If the project ever scales beyond a closed group, the migration path is:
-add Supabase Auth → flip RLS on → replace `GRANT ALL anon` with
-`auth.uid()`-scoped policies → rotate the anon key. See SECURITY.md §
-"What changes if you ever add auth."
+🚧 **At public-launch time** (Phase 3 of the launch plan), this changes:
+- Add Supabase Auth (email/password + Google OAuth)
+- Migrate `users.id` from `text` to `uuid` keyed to `auth.users(id)`
+- Flip RLS on across every table; per-user policies via `auth.uid()`
+- Replace `GRANT ALL anon` with policy-driven access
+- Rotate the Supabase anon key (now meaningful)
+- Stripe billing + tier-based feature gating
+- Privacy policy + Terms of Service
+
+See `SECURITY.md` § "What changes if you ever add auth" for the
+migration runbook.
 
 ---
 
@@ -685,6 +702,11 @@ add Supabase Auth → flip RLS on → replace `GRANT ALL anon` with
 
 The product is shippable as-is. Each phase below is additive — none
 breaks earlier phases.
+
+> **Active sprint:** Public SaaS launch under Layaa AI in ~30 days
+> from 2026-06-29. Phases 1, 2, and 3 below + auth/billing/email
+> infrastructure are all in scope for that sprint. See `claude.md`
+> for day-by-day tasks. Phases 4 onward come after launch.
 
 ### ✅ Phase 0 — Foundation (shipped)
 

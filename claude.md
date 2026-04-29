@@ -179,15 +179,22 @@ the product + a "Start free" CTA into the app.
 
 ## 6 · Current state snapshot (live)
 
-**Build status:** ✓ typecheck clean · ✓ lint 0 errors · ✓ npm audit 0 vulns
-**Deployed prod:** `cock-roach.vercel.app` (last successful: 2026-04-22 deploy)
-**Current local commit:** `c6a8a8f` (security: remove hardcoded Azure key + complete platform remediation)
-**Push status:** ❌ blocked — remote diverged with 15 commits during the session; merge required (see §8 Open Questions)
+**Build status:** ✓ typecheck clean · ✓ lint 0 errors (43 warnings, all `any` types, non-blocking)
+**Deployed prod:** `cock-roach.vercel.app` (auto-deploys from `main`)
+**Local + origin/main:** aligned at `dbaf983` (chore: remove legacy doc files)
+**Recent commits today (2026-06-29):**
+- `dbaf983` — chore: remove legacy doc files (COCKROACH_AGENT_SYSTEM_PROMPT, COCKROACH_MASTER_PROMPT, metadata.json, supabase_schema.sql)
+- `2f48765` — docs: add canonical product doc + live project context (documentation.md + claude.md)
+- `6b2c654` — (other contributor) Make entire app fully responsive for mobile
 
-**Known broken / undecided:**
-- Push to `4asaanAI/CockRoach` blocked pending merge approval
-- The leaked Azure key was rotated; old string is in git history but dead
-- 1Password SSH-signing failed during last commit; commit went through unsigned (re-sign later if desired)
+**Phase 0 (git divergence) → ✅ DONE.**
+**Phase 1 Day 1 → IN PROGRESS** (legacy deletes ✓; documentation.md and ARCHITECTURE.md updates ✓; claude.md log entry ⏳).
+
+**Backup branch:** `backup-c6a8a8f` (local, holds our pre-merge commit; can delete once we're confident).
+
+**Open notes:**
+- 1Password SSH-signing still failing on commits; using `commit.gpgsign=false` per-commit. Re-sign later when 1Password agent is reachable.
+- Azure key revoked; the dead string remains in pre-`dbaf983` git history. GitHub secret-scan alert can be closed as "Revoked" anytime.
 
 ---
 
@@ -275,6 +282,27 @@ launch, freeze all non-essential testing and shift to mock-mode for QA.
   (What / Changes / Why beneficial / Pointers).
 - Plan approved + saved at `~/.claude/plans/compressed-conjuring-wilkes.md`.
 - Next action: Phase 0 git divergence resolution.
+
+### 2026-06-29 — Phase 0 + Day 1 execution
+- **Phase 0 (git divergence) ✅ resolved.** Reset local to origin/main
+  (which had been silently integrated by another contributor, likely
+  Shubham before stepping off). Restored `documentation.md` (only
+  missing piece). Pushed as commit `2f48765`.
+- **Phase 1 Day 1 progress:**
+  - Deleted 4 legacy files (COCKROACH_AGENT_SYSTEM_PROMPT.md,
+    COCKROACH_MASTER_PROMPT.md, metadata.json, supabase_schema.sql)
+    that the other contributor restored. Authorized by Abhi. Pushed
+    as `dbaf983`. -1064 lines, build still clean.
+  - Updated `documentation.md` to reflect Layaa AI ownership +
+    SaaS-launch positioning + 2026-06-29 date.
+  - Updated `ARCHITECTURE.md` for Layaa AI parent + SaaS staging
+    note.
+  - This `claude.md` §6 + §11 entry being added now.
+- **Verified post-merge:** typecheck ✓ / lint 0 errors / npm audit 0.
+- **Backup branch `backup-c6a8a8f`** still local; safe to delete
+  whenever Abhi wants.
+- Next: complete Day 1 by committing the doc updates, then start
+  Day 2 (Project spine — data layer migrations).
 
 ---
 

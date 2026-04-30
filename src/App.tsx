@@ -49,6 +49,7 @@ import { useShareLink } from './hooks/useShareLink';
 import SettingsLLM from './components/SettingsLLM';
 import ProfileSelector from './components/ProfileSelector';
 import ProjectsList from './components/ProjectsList';
+import ProjectDetail from './components/ProjectDetail';
 import { Toaster, toast } from 'sonner';
 import { buildSystemPrompt } from './lib/system-prompt-builder';
 import { COCKROACH_DEFAULT_SYSTEM_PROMPT } from './lib/kb-constants';
@@ -1141,17 +1142,16 @@ export default function App() {
               </p>
             </div>
           ) : currentPage === 'projects' ? (
-            activeProjectId ? (
-              <div className="max-w-3xl mx-auto p-8 text-center space-y-4">
-                <p className="text-sm text-muted-foreground">Project detail view shipping in the next commit.</p>
-                <p className="text-[11px] text-muted-foreground/60 font-mono">Project ID: {activeProjectId}</p>
-                <button
-                  onClick={() => setActiveProjectId(null)}
-                  className="px-4 py-2 text-[11px] font-bold uppercase tracking-widest bg-surface-mid border border-border rounded-xl text-foreground hover:border-primary/30 transition-all"
-                >
-                  ← Back to projects
-                </button>
-              </div>
+            activeProjectId && currentUser ? (
+              <ProjectDetail
+                projectId={activeProjectId}
+                userId={currentUser.id}
+                onBack={() => setActiveProjectId(null)}
+                onOpenChat={(chatId) => {
+                  setActiveChatId(chatId);
+                  setCurrentPage('chat');
+                }}
+              />
             ) : (
               <ProjectsList
                 userId={currentUser?.id ?? null}

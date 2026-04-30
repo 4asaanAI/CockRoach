@@ -119,10 +119,18 @@ the product + a "Start free" CTA into the app.
   - new `decisions` table
   - new `project_artifacts` table
   - add `project_id` FK to `chats` and `memory_items`
-- [ ] `useProjects` hook
-- [ ] `/projects` list page + project detail page (chats / decisions / artifacts tabs)
+- [x] `useProjects` hook
+- [ ] `/projects` list page (active-default view; stage filter chips; create modal; skeleton + empty state)
+- [ ] Project detail page with 4 tabs: **Chats / Decisions / Artifacts / Inbox**
+- [ ] **Decisions tab defaults to Reversibility Kanban** (Reversible / Expensive / One-way columns) — Notion launched this exact pattern Feb 2026; validates the Bezos schema design
+- [ ] Decision form modal (category, question, decision, reversibility, optional pre_mortem + revisit_at)
+- [ ] Inbox tab — actionable items: revisit-due / decay-near / pulse-overdue
+- [ ] KPI strip on project detail from `health_score` jsonb
+- [ ] **Project switcher in left sidebar** (Notion-style top-of-sidebar; higher discoverability than chat-header)
 - [ ] "Start project from this chat" action
-- [ ] Project-aware system prompt (latest decisions injected)
+- [ ] Project-aware system prompt (latest 10 decisions + project description injected when active)
+- [ ] Skeleton loaders (Linear/Stripe pattern) for list + detail tabs
+- [ ] Empty states with action prompts (e.g., "Start your first project from a validation chat")
 
 **Day 6 (2026-05-01)**
 - [ ] Author 4 operator-mode KBs:

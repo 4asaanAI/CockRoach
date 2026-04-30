@@ -4,7 +4,6 @@ import { cn } from './lib/utils';
 import {
   Search,
   Plus,
-  FolderKanban,
   Settings,
   User,
   PanelLeftClose,
@@ -49,6 +48,7 @@ import { useAzureChat } from './hooks/useAzureChat';
 import { useShareLink } from './hooks/useShareLink';
 import SettingsLLM from './components/SettingsLLM';
 import ProfileSelector from './components/ProfileSelector';
+import ProjectsList from './components/ProjectsList';
 import { Toaster, toast } from 'sonner';
 import { buildSystemPrompt } from './lib/system-prompt-builder';
 import { COCKROACH_DEFAULT_SYSTEM_PROMPT } from './lib/kb-constants';
@@ -111,6 +111,7 @@ export default function App() {
   const [activeMode, setActiveMode] = React.useState('GENERAL');
   const [isModeSelectOpen, setIsModeSelectOpen] = React.useState(false);
   const [currentPage, setCurrentPage] = React.useState<'chat' | 'settings' | 'research' | 'memory' | 'projects'>('chat');
+  const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
   const [isBrutalHonesty, setIsBrutalHonesty] = React.useState(false);
 
   // Chat State
@@ -1140,13 +1141,23 @@ export default function App() {
               </p>
             </div>
           ) : currentPage === 'projects' ? (
-            <div className="max-w-3xl mx-auto flex flex-col items-center justify-center min-h-full space-y-4 animate-in fade-in slide-in-from-bottom-5">
-              <FolderKanban size={48} className="text-primary opacity-50" />
-              <h2 className="text-xl font-bold text-foreground">Macro Projects Pipeline</h2>
-              <p className="text-muted-foreground text-sm max-w-md text-center">
-                Active operations and strategic blueprints will appear here. No active projects detected.
-              </p>
-            </div>
+            activeProjectId ? (
+              <div className="max-w-3xl mx-auto p-8 text-center space-y-4">
+                <p className="text-sm text-muted-foreground">Project detail view shipping in the next commit.</p>
+                <p className="text-[11px] text-muted-foreground/60 font-mono">Project ID: {activeProjectId}</p>
+                <button
+                  onClick={() => setActiveProjectId(null)}
+                  className="px-4 py-2 text-[11px] font-bold uppercase tracking-widest bg-surface-mid border border-border rounded-xl text-foreground hover:border-primary/30 transition-all"
+                >
+                  ← Back to projects
+                </button>
+              </div>
+            ) : (
+              <ProjectsList
+                userId={currentUser?.id ?? null}
+                onOpenProject={(id) => setActiveProjectId(id)}
+              />
+            )
           ) : (
             <div className="flex flex-col min-h-full">
               {messages.length === 0 ? (

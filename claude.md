@@ -190,8 +190,12 @@ the product + a "Start free" CTA into the app.
 **Build status:** ✓ typecheck clean · ✓ lint 0 errors (43 warnings, all `any` types, non-blocking)
 **Deployed prod:** `cock-roach.vercel.app` (auto-deploys from `main`)
 **Local + origin/main:** aligned at `aad125e` (docs: align documentation/architecture/claude.md for Layaa AI launch)
-**Canonical remote:** `origin` → `https://github.com/layaaai222-art/CockRoach.git` (Layaa AI's repo)
-**Backup remote:** `4asaan` → `https://github.com/4asaanAI/CockRoach.git` (preserved)
+**Canonical remote:** `origin` → `https://github.com/4asaanAI/CockRoach.git` (Vercel-deployed; auto-deploys to `cock-roach.vercel.app` on push)
+**Mirror remote:** `layaaai` → `https://github.com/layaaai222-art/CockRoach.git` (Layaa AI's repo; manually kept in sync)
+
+> Note (2026-04-30): origin was briefly layaaai222-art but Vercel is
+> hooked to 4asaanAI/CockRoach. Switched origin back. Future commits
+> deploy automatically; push to `layaaai` separately if mirror needed.
 
 **Phase 0 (git divergence) → ✅ DONE.**
 **Phase 1 Day 1 → ✅ DONE** (legacy deletes; documentation.md + ARCHITECTURE.md updates).

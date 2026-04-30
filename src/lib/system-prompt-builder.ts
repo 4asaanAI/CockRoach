@@ -30,8 +30,9 @@ export function buildSystemPrompt(params: {
   activeMode: string;
   userName: string;
   isBrutalHonesty: boolean;
+  projectContext?: string | null;
 }): string {
-  const { systemPromptBase, kbToggles, memoryItems, activeMode, userName, isBrutalHonesty } = params;
+  const { systemPromptBase, kbToggles, memoryItems, activeMode, userName, isBrutalHonesty, projectContext } = params;
   const parts: string[] = [];
 
   parts.push(`[COCKROACH AGENT SYSTEM PROMPT]\n${systemPromptBase}`);
@@ -51,6 +52,10 @@ export function buildSystemPrompt(params: {
   const modeKB = getModeKB(activeMode);
   if (modeKB) {
     parts.push(`[MODE KB — ${activeMode}]\n${modeKB}`);
+  }
+
+  if (projectContext) {
+    parts.push(`[PROJECT CONTEXT]\n${projectContext}\n[/PROJECT CONTEXT]`);
   }
 
   if (memoryItems.length > 0) {

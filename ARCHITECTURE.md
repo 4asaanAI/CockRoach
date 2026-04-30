@@ -529,10 +529,54 @@ artifacts, pulse_log) live in their own hooks.
 - `remove(id)` — hard delete (cascades to decisions, artifacts, pulse_log)
 - `byId(id)` — memoised lookup helper
 
+### `useDecisions`
+Decisions CRUD scoped to a project. Captures Bezos Type-1/Type-2
+reversibility, pre-mortem, dependency graph, revisit timer, and
+full reversal trail.
+
+- `decisions: Decision[]` — newest first
+- `log(input: NewDecision)` — insert + prepend in state
+- `markRevisited(id, outcome)` — sets `outcome_observed` (clears
+  revisit-due indicator)
+- `reverse(originalId, replacement)` — inserts a replacement decision
+  AND stamps the original with `reversed_at` + `reversed_by_decision_id`.
+  Decision history is never lost; reversed entries render with
+  strikethrough + opacity-50 in the UI.
+- `byId(id)` — memoised lookup
+
+### `useArtifacts`
+Artifact catalog scoped to a project. Tracks versioning lineage.
+
+- `artifacts: ProjectArtifact[]`
+- `save(input: NewProjectArtifact)` — insert
+- `saveNewVersion(parentId, patch)` — auto-bumps `version` and sets
+  `parent_artifact_id` so the chain is traceable
+- `remove(id)` — hard delete
+- `byId(id)`
+
+### `usePulseLog`
+Read-only fetcher for project_pulse_log entries. Pulse generation
+runs server-side (cron, post-launch).
+
+### `useProjectInbox`
+Pure derivation hook (no DB call) that takes a project + its decisions
++ pulse logs and surfaces actionable items:
+- `revisit_due` — decisions whose `revisit_at` has passed and no
+  outcome has been observed yet
+- `decay_near` — decisions whose `reversibility_decay_at` is within
+  7 days, not yet reversed
+- `pulse_overdue` — last pulse log > 9 days old (or none, project > 7d
+  old)
+- `no_recent_activity` — project untouched > 21 days
+
+Returns sorted by severity (high → low), then by days overdue desc.
+
 Type definitions for `Project`, `Decision`, `ProjectArtifact`,
 `ProjectPulseLog` plus enum metadata (`PROJECT_STAGES`,
 `DECISION_CATEGORIES`, `REVERSIBILITY_LEVELS`, `ARTIFACT_KINDS`) live in
-`src/lib/types.ts`.
+`src/lib/types.ts`. Format helper `formatProjectContext(project, decisions)`
+lives in `src/lib/project-context.ts` and is consumed by the system
+prompt builder when an active project is selected.
 
 ---
 
@@ -561,6 +605,36 @@ session token counts + Azure pricing lookups via public pricing API.
 System prompt editor (persists to `system_prompts.prompt`), KB toggles
 (`kb_01_enabled`…`kb_04_enabled`), memory editor (CRUD on
 `memory_items`).
+
+### `ProjectsList.tsx`
+The `/projects` page. Stage-color-coded cards, filter chips (Active /
+All / per-stage), skeleton loaders, empty state with action prompt,
+CreateProjectModal trigger.
+
+### `ProjectDetail.tsx`
+Per-project workspace. Header (rename in place, stage selector
+dropdown, archive button), KPI strip from `health_score` JSONB, 4 tabs:
+- `ChatsTab` — chats with this project_id
+- `DecisionsTab` — Reversibility Kanban (default) + List view +
+  DecisionFormModal trigger
+- `ArtifactsTab` — version-chain rendering of artifact roots
+- `InboxTab` — actionable items via `useProjectInbox`
+
+### `projects/ProjectSwitcher.tsx`
+Top-of-sidebar workspace switcher (Notion pattern). Shows active
+project + caret; dropdown lists active projects + "Manage all" +
+"Create new". Setting an active project causes new chats to inherit it
+and the system prompt to inject `[PROJECT CONTEXT]`.
+
+### `projects/CreateProjectModal.tsx`
+Name + description + stage selector with inline stage descriptions.
+Auto-opens detail view on create.
+
+### `projects/DecisionFormModal.tsx`
+Decision-logging form with visual reversibility selector (educates
+users on the Bezos framework via inline help text per level),
+confidence pills, optional rationale, collapsible advanced section
+(`pre_mortem` + `revisit_at`).
 
 ### `MermaidDiagram.tsx`
 Renders Mermaid code blocks that appear in assistant messages.

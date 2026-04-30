@@ -195,7 +195,8 @@ the product + a "Start free" CTA into the app.
 
 **Phase 0 (git divergence) → ✅ DONE.**
 **Phase 1 Day 1 → ✅ DONE** (legacy deletes; documentation.md + ARCHITECTURE.md updates).
-**Phase 1 Day 2 (Project spine — data layer) → IN PROGRESS** as of 2026-04-30.
+**Phase 1 Day 2 (Project spine — data layer) → ✅ DONE** 2026-04-30.
+**Phase 1 Day 3 (Project spine — UI) → ✅ DONE** 2026-04-30 (same-day; we ran ahead).
 
 **Day 2 progress (today, 2026-04-30):**
 - ✅ Supabase MCP reconfigured to hosted HTTP + OAuth (project-scope `.mcp.json`).
@@ -376,6 +377,88 @@ launch, freeze all non-essential testing and shift to mock-mode for QA.
   - Project-aware system prompt (latest 10 decisions + project
     description injected when active).
   - Mode reorder + Discovery submenu.
+
+### 2026-04-30 — Phase 1 Day 3: Project spine (UI)
+- **Research lock-in.** Investigated ChatGPT Projects, Claude Projects,
+  Notion's new "Decision Tracker Kanban" template (Feb 2026), Linear,
+  Vercel dashboard patterns, and 2026 SaaS UI trends. Two adoption
+  decisions:
+  - **Reversibility Kanban** as the default decisions view — Notion
+    just shipped this exact pattern, validating Bezos's framework as
+    a real UX primitive (not just a mental model).
+  - **Project switcher in left sidebar (top, Notion workspace-pattern)**
+    rather than chat header — higher discoverability per Notion's
+    workspace-switcher design.
+- **Shipped (3 commits, all today):**
+  - **Batch A** (`7b412b1`): hooks + project list page.
+    - `useDecisions(projectId)` — fetch + log + markRevisited + reverse
+      (with full reversal trail). The `reverse()` helper inserts a
+      replacement decision and stamps the original with `reversed_at`
+      + `reversed_by_decision_id`, so no decision history is ever lost.
+    - `useArtifacts(projectId)` — fetch + save + saveNewVersion
+      (auto-bumps `version` and sets `parent_artifact_id`) + remove.
+    - `usePulseLog(projectId)` — read-only fetcher; pulse generation
+      is server-side later.
+    - `useProjectInbox({ project, decisions, pulseLogs })` — pure
+      derivation surfacing actionable items: revisit_due / decay_near /
+      pulse_overdue / no_recent_activity. Sorted by severity → days
+      overdue.
+    - `ProjectsList` component with stage-color-coded cards, filter
+      chips (Active / All / per-stage), skeleton loaders (Stripe
+      pattern), empty state with action prompt.
+    - `CreateProjectModal` with name + description + stage selector.
+  - **Batch B** (`b1d29dd`): project detail page + 4 tabs +
+    decision form modal.
+    - `ProjectDetail` with header (rename in place, stage selector
+      dropdown, archive button), KPI strip (Linear/Vercel pattern;
+      tiles for Created / Last activity / Health / Pulse), 4 tabs.
+    - `ChatsTab` — chats with this project's `project_id`; click
+      switches to chat view with that chat active.
+    - `DecisionsTab` — defaults to **Reversibility Kanban** with 3
+      columns (Reversible / Expensive / One-way). Each column gets
+      its own colored border and inline help (Bezos reasoning surfaced
+      to the user). Card shows: category, question (truncated), decision
+      (truncated), confidence, decided-at, plus indicator badges
+      (Reversed strikethrough, Revisit due clock, Decay-near alert).
+      Toggle to flat List view.
+    - `DecisionFormModal` — category grid (11 categories), question +
+      decision required textareas, **visual reversibility selector
+      with inline Bezos help text** (educates users on the framework),
+      confidence pills, optional rationale, collapsible advanced
+      section with `pre_mortem` ("if wrong, what's the most likely
+      failure mode?") and `revisit_at` date picker.
+    - `ArtifactsTab` — kind-color-coded grid; follows
+      `parent_artifact_id` chain to find the latest version of each
+      artifact root; shows version count and exported_format badge.
+    - `InboxTab` — surfaces useProjectInbox items with severity badges
+      and original-decision context where applicable.
+  - **Batch C** (this commit): sidebar project switcher + project-aware
+    system prompt + chat→project linking.
+    - `ProjectSwitcher` in left sidebar (top, between brand and
+      "New Conversation"). Notion-style: shows current active project +
+      caret; dropdown reveals up to 8 active projects + "Manage all
+      projects" + "Create new project". Clear button (X) when active.
+    - `formatProjectContext(project, decisions)` in `lib/project-context.ts`
+      — formats project + latest 10 non-reversed decisions into a
+      markdown block for system-prompt injection. Includes pre-mortems.
+      Tells the agent: "If the user is about to contradict a recent
+      one-way-door decision, flag it before answering."
+    - `system-prompt-builder.ts` extended with optional `projectContext`
+      param; emits `[PROJECT CONTEXT]…[/PROJECT CONTEXT]` block before
+      memory context.
+    - App.tsx wires it: useProjects + useDecisions scoped to
+      activeProjectId, computes projectContext via useMemo, passes to
+      every `buildSystemPrompt` call.
+    - New chats inherit `activeProjectId` automatically when inserted.
+- **Verified:** `npm run typecheck` passes through all 3 batches;
+  `npm run lint` 0 errors (42 pre-existing `any` warnings).
+- **Skipped for Day 3 (deferred):** "Anchor existing chat to project"
+  pill in chat header (small UX polish; existing chats can be moved
+  later); decision dependency graph viz (Day 5+); pulse widget
+  visualization (Day 5/6 once first pulse logs exist); cross-project
+  search (Day 5).
+- **Next:** Day 4 (operator modes — PRICING, GO_TO_MARKET, FUNDRAISING,
+  HIRING_AND_EQUITY) + mode reorder + Discovery submenu.
 
 ---
 

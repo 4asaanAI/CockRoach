@@ -50,6 +50,10 @@ import SettingsLLM from './components/SettingsLLM';
 import ProfileSelector from './components/ProfileSelector';
 import ProjectsList from './components/ProjectsList';
 import ProjectDetail from './components/ProjectDetail';
+import ProjectSwitcher from './components/projects/ProjectSwitcher';
+import { useProjects } from './hooks/useProjects';
+import { useDecisions } from './hooks/useDecisions';
+import { formatProjectContext } from './lib/project-context';
 import { Toaster, toast } from 'sonner';
 import { buildSystemPrompt } from './lib/system-prompt-builder';
 import { COCKROACH_DEFAULT_SYSTEM_PROMPT } from './lib/kb-constants';
@@ -113,6 +117,17 @@ export default function App() {
   const [isModeSelectOpen, setIsModeSelectOpen] = React.useState(false);
   const [currentPage, setCurrentPage] = React.useState<'chat' | 'settings' | 'research' | 'memory' | 'projects'>('chat');
   const [activeProjectId, setActiveProjectId] = React.useState<string | null>(null);
+
+  // Project context for the system prompt — when activeProjectId is set, the
+  // agent gets a [PROJECT CONTEXT] block listing the project description and
+  // the latest 10 non-reversed decisions.
+  const { byId: projectById } = useProjects({ userId: currentUser?.id ?? null });
+  const { decisions: projectDecisions } = useDecisions({ projectId: activeProjectId });
+  const activeProject = projectById(activeProjectId);
+  const projectContext = React.useMemo(
+    () => formatProjectContext(activeProject, projectDecisions),
+    [activeProject, projectDecisions],
+  );
   const [isBrutalHonesty, setIsBrutalHonesty] = React.useState(false);
 
   // Chat State
@@ -460,6 +475,7 @@ export default function App() {
         const { data: chatData, error } = await supabase.from('chats').insert({
           user_id: currentUser.id,
           title: (textInput || pendingFile?.name || 'File').substring(0, 50),
+          project_id: activeProjectId,
         }).select().single();
         if (error) { toast.error(`Chat Init Error: ${error.message}`); throw error; }
         currentChatId = chatData.id;
@@ -489,6 +505,7 @@ export default function App() {
         systemPromptBase: systemPrompt || COCKROACH_DEFAULT_SYSTEM_PROMPT,
         kbToggles, memoryItems, activeMode,
         userName: currentUser.name, isBrutalHonesty,
+        projectContext,
       });
 
       const urlCtx = buildUrlContext(urlPreviews);
@@ -757,14 +774,32 @@ export default function App() {
           </button>
         </div>
 
+        {/* Project switcher — Notion-style top-of-sidebar */}
+        <ProjectSwitcher
+          userId={currentUser?.id ?? null}
+          activeProjectId={activeProjectId}
+          onSelectProject={(id) => {
+            setActiveProjectId(id);
+            setCurrentPage('chat');
+          }}
+          onOpenAll={() => {
+            setActiveProjectId(null);
+            setCurrentPage('projects');
+          }}
+          onCreateNew={() => {
+            setActiveProjectId(null);
+            setCurrentPage('projects');
+          }}
+        />
+
         {/* Action Button - New Chat */}
         <div className="p-3">
-          <button 
+          <button
             onClick={() => {
               setMessages([]);
               setActiveChatId(null);
               setCurrentPage('chat');
-            }} 
+            }}
             className="w-full flex items-center justify-center gap-2 bg-primary text-white text-sm font-semibold h-10 rounded-xl hover:brightness-110 active:scale-[0.98] transition-all shadow-sm shadow-primary/20"
           >
             <Plus size={16} />

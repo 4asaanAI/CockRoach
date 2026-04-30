@@ -747,17 +747,41 @@ persistent venture memory."
 - Supabase JS client supports new `VITE_SUPABASE_PUBLISHABLE_KEY`
   alongside legacy `VITE_SUPABASE_ANON_KEY`
 
-**Day 3 (UI) 🚧 next:**
-- Project list UI page (`currentPage='projects'`)
-- Project detail page with tabs: chats / decisions / artifacts /
-  reminders
-- "Start project from this chat" action
-- Project switcher dropdown in chat header
-- Project-scoped chat filtering
-- Project-aware system prompt (latest 10 decisions + project description
-  injected)
-- Mode reorder in UI: post-idea modes promoted, discovery modes moved
-  to a Discovery submenu
+**Day 3 (UI) ✅ shipped 2026-04-30:**
+- ProjectsList page (`/projects`) with stage-color-coded cards, filter
+  chips (Active default, plus per-stage), skeleton loaders, empty state
+  with action prompt, CreateProjectModal.
+- ProjectDetail page with header (rename in place + stage selector +
+  archive), KPI strip (created / last activity / health / pulse), and
+  4 tabs: Chats / Decisions / Artifacts / Inbox.
+- DecisionsTab defaults to **Reversibility Kanban** — three columns
+  (Reversible / Expensive / One-way) with inline Bezos help text on
+  each column header. Toggle to flat List view. Decision cards show
+  category, question, decision, confidence, decided-at, plus indicator
+  badges (Reversed / Revisit due / Decay-near).
+- DecisionFormModal with visual reversibility selector (educates users
+  on the Bezos framework inline), confidence pills, optional rationale,
+  collapsible advanced section for pre_mortem + revisit_at.
+- ArtifactsTab with version-chain rendering (follows
+  `parent_artifact_id` to find the latest version of each artifact).
+- InboxTab surfaces actionable items derived from useProjectInbox
+  (revisit_due, decay_near, pulse_overdue, no_recent_activity).
+- ProjectSwitcher in left sidebar (Notion workspace-pattern, top of
+  sidebar) — sets the active project for the whole workspace.
+- New chats inherit `activeProjectId` automatically.
+- **Project-aware system prompt** — when activeProjectId is set, a
+  `[PROJECT CONTEXT]` block is injected with the project description
+  and the latest 10 non-reversed decisions (including pre-mortems).
+  The agent is told to flag conflicts when the user is about to
+  contradict a recent one-way-door decision.
+- Sub-resource hooks: useDecisions, useArtifacts, usePulseLog,
+  useProjectInbox.
+
+**Deferred to later days:**
+- "Anchor existing chat to project" pill in chat header
+- Decision dependency graph visualization
+- Pulse widget visualization (waits for first pulse logs)
+- Cross-project search
 
 ### 🚧 Phase 2 — Operator modes
 
